@@ -166,11 +166,11 @@ func place(_ w: AXUIElement, _ frame: CGRect) {
 
 // Moves windows to their new frames: fast start, soft landing, then calls done.
 let glideTime = 0.18
-func glide(_ moves: [(AXUIElement, from: CGRect, to: CGRect)], duration: Double = glideTime, done: (() -> Void)? = nil) {
+func glide(_ moves: [(AXUIElement, from: CGRect, to: CGRect)], duration: Double = glideTime, power: Double = 5, done: (() -> Void)? = nil) {
     let start = Date()
     Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { timer in
         let t = min(1, Date().timeIntervalSince(start) / duration)
-        let e = 1 - pow(1 - t, 5)
+        let e = 1 - pow(1 - t, power)
         for (w, a, b) in moves {
             if t >= 1 { place(w, b); continue }
             var pos = CGPoint(x: a.minX + (b.minX - a.minX) * e, y: a.minY + (b.minY - a.minY) * e)

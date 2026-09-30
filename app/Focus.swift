@@ -16,9 +16,8 @@ final class Focus {
     var before = CGRect.zero
     var target = CGRect.zero
     var blur: NSWindow?
-    // The same cover on every other screen, and the dark layer of each.
+    // The same cover on every other screen.
     var others: [NSWindow] = []
-    var shades: [NSView] = []
     var zooming = false
     var terminal = ""
     // Reads what the terminal is and how many lines it holds, beside the main thread, while the window slides.
@@ -35,17 +34,12 @@ final class Focus {
         get { UserDefaults.standard.object(forKey: "focusZoom") as? Double ?? 2 }
         set { UserDefaults.standard.set(newValue, forKey: "focusZoom") }
     }
-    // Setting from the menu: how dark the background gets on top of the blur; 0 = blur only.
-    var shade: Double {
-        get { UserDefaults.standard.object(forKey: "focusShade") as? Double ?? 0.75 }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "focusShade")
-            shades.forEach { $0.layer?.backgroundColor = NSColor.black.withAlphaComponent(newValue).cgColor }
-        }
-    }
+    // How dark the background gets on top of the blur: almost black, what lies behind stays just visible.
+    let shade = 0.9
     var textStep = 0.0
     var cellsBefore: [String: Cells] = [:], keepRows = true
-    let zoomTime = 0.26, fadeTime = 0.12, blurTime = 0.13, closeTime = 0.4
+    // One duration and one curve for everything Focus moves or fades.
+    let time = 0.2, power = 3.0
 
     var active: Bool { window != nil }
 
@@ -111,7 +105,6 @@ final class Focus {
         // The blur covers every screen.
         let b: NSWindow
         if covers.isEmpty {
-            shades = []
             b = cover(screen)
             others = NSScreen.screens.filter { $0 != screen }.map(cover)
         } else {
@@ -130,7 +123,7 @@ final class Focus {
         if textStep == 0 {
             // Nothing re-wraps: the real window can glide.
             for c in [b] + others { c.order(.below, relativeTo: Int(id)); fade(c, to: 1) }
-            glide([(w, frame, target)]) {
+            slide(w, frame, target) {
                 // A window that did not take the whole size still sits in the middle.
                 guard self.window != nil, self.windowID == id, let f = axFrame(w),
                       abs(f.width - self.target.width) > 2 || abs(f.height - self.target.height) > 2 else { return }
@@ -146,10 +139,10 @@ final class Focus {
         zooming = true
         let first = Task { @MainActor in await self.shot(id, w) }
         var still: Task<CGImage?, Never>?
-        for c in others { c.order(.below, relativeTo: Int(id)); fade(c, to: 1, time: blurTime) }
+        for c in others { c.order(.below, relativeTo: Int(id)); fade(c, to: 1) }
         b.order(.below, relativeTo: Int(id))
-        fade(b, to: 1, time: blurTime) { still = Task { @MainActor in await self.screenshot(b.frame, without: id) } }
-        glide([(w, frame, middle)]) {
+        fade(b, to: 1) { still = Task { @MainActor in await self.screenshot(b.frame, without: id) } }
+        slide(w, frame, middle) {
             self.swap(w, to: self.target, font: "increase_font_size:\(self.textStep)", opening: true, cover: b, early: still.map { (first, $0) }) {}
         }
         return true
@@ -166,7 +159,6 @@ final class Focus {
         dark.autoresizingMask = [.width, .height]; dark.wantsLayer = true
         dark.layer?.backgroundColor = NSColor.black.withAlphaComponent(shade).cgColor
         view.addSubview(dark)
-        shades.append(dark)
         b.contentView = view
         b.alphaValue = 0
         return b
@@ -192,7 +184,6 @@ final class Focus {
         _ = end(keeping: true) {
             self.handing = false
             if !self.start(reusing: covers) {
-                self.shades = []
                 for c in covers { self.fade(c, to: 0) { c.orderOut(nil) } }
             }
         }
@@ -229,7 +220,6 @@ final class Focus {
         let step = textStep
         let covers = keeping ? [] : [b] + others
         window = nil; blur = nil; others = []; textStep = 0
-        if !keeping { shades = [] }
         if !keeping && !staying {
             // Bringing an app forward that is in front already makes it busy for a moment, and the slide home waits.
             if NSWorkspace.shared.frontmostApplication?.processIdentifier != app?.processIdentifier { app?.activate() }
@@ -237,7 +227,7 @@ final class Focus {
         if keeping {
             // Behind the covers nobody watches: the window goes home while the next one is already on its way,
             // a grown terminal in one step.
-            if step == 0 { glide([(w, from, before)]) } else {
+            if step == 0 { slide(w, from, before) } else {
                 if !terminal.isEmpty { script("tell application \"Ghostty\" to perform action \"decrease_font_size:\(step)\" on terminal id \(quoted(terminal))") }
                 place(w, before)
             }
@@ -245,17 +235,17 @@ final class Focus {
             return true
         }
         if step == 0 {
-            glide([(w, from, before)]) { done?() }
+            slide(w, from, before) { done?() }
             for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
             return true
         }
         // The blur starts to clear at once, so the key feels answered. Meanwhile the window shrinks
         // in the middle in one soft fade, then slides back home.
-        for c in covers { fade(c, to: 0, time: closeTime) { c.orderOut(nil) } }
+        for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
         let small = centred(before.size, on: CGPoint(x: from.midX, y: from.midY))
         swap(w, to: small, font: "decrease_font_size:\(step)", opening: false, cover: nil) {
             self.zooming = true
-            glide([(w, small, self.before)]) { self.zooming = false; done?() }
+            self.slide(w, small, self.before) { self.zooming = false; done?() }
         }
         return true
     }
@@ -312,7 +302,7 @@ final class Focus {
             guard opening else {
                 // Shrunk, the real window lies whole under its old, bigger picture: the picture just fades away.
                 try? await Task.sleep(for: .milliseconds(25))
-                self.fade(from, to: 0, time: self.fadeTime + 0.02) { from.orderOut(nil); finish() }
+                self.fade(from, to: 0) { from.orderOut(nil); finish() }
                 return
             }
             // Matching the lines has waited for the window already, unless it had to nudge it once more.
@@ -324,7 +314,7 @@ final class Focus {
             let to = self.picture(new)
             to.alphaValue = 0
             to.order(.above, relativeTo: from.windowNumber)
-            self.fade(to, to: 0.99, time: self.fadeTime + 0.06) {
+            self.fade(to, to: 0.99) {
                 backdrop?.orderOut(nil); from.orderOut(nil); to.orderOut(nil)
                 finish()
             }
@@ -384,18 +374,25 @@ final class Focus {
 
     // Grid steps the fade itself, in time with the slide. Left to macOS, a fade that starts on a window
     // just put on screen shows its first third in one jump.
-    func fade(_ w: NSWindow, to alpha: CGFloat, time: Double? = nil, done: (() -> Void)? = nil) {
-        let duration = time ?? (alpha == 0 && w !== blur ? fadeTime : zoomTime)
+    func fade(_ w: NSWindow, to alpha: CGFloat, done: (() -> Void)? = nil) {
+        let duration = time, power = power
         let from = w.alphaValue
         var start: Date?
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in
             // The clock starts with the first tick, when the window is really there.
             let s = start ?? Date(); start = s
-            let t = min(1, Date().timeIntervalSince(s) / duration), e = 1 - (1 - t) * (1 - t)
+            let t = min(1, Date().timeIntervalSince(s) / duration), e = 1 - pow(1 - t, power)
             w.alphaValue = from + (alpha - from) * e
             if t >= 1 { timer.invalidate(); done?() }
         }
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    // A slide in Focus's own time and curve. With Reduce Motion on in System Settings the window does not
+    // travel: it is simply there, and only the background fades.
+    func slide(_ w: AXUIElement, _ from: CGRect, _ to: CGRect, done: (() -> Void)? = nil) {
+        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        glide([(w, still ? to : from, to)], duration: time, power: power, done: done)
     }
 
     func centred(_ size: CGSize, on c: CGPoint) -> CGRect {

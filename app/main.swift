@@ -16,7 +16,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         UserDefaults.standard.register(defaults: ["gap": 8.0])
-        item.button?.image = icon([2, 2], w: 36, h: 28, radius: 6)
+        item.button?.image = icon(coding, w: 36, h: 28, radius: 6)
         item.button?.setAccessibilityLabel("Grid")
         // Start at login, once; the menu can turn it off.
         if !UserDefaults.standard.bool(forKey: "loginSet") {
@@ -49,22 +49,13 @@ final class App: NSObject, NSApplicationDelegate {
         let settings = NSMenu()
         let fs = NSMenuItem(title: "Focus Zoom", action: nil, keyEquivalent: "")
         let fsMenu = NSMenu()
-        for z in [1, 1.25, 1.5, 1.75, 2] {
+        for z in [1, 1.5, 2] {
             let m = NSMenuItem(title: "\(z.formatted()) ×", action: #selector(setFocusZoom(_:)), keyEquivalent: "")
             m.target = self; m.representedObject = z; m.state = abs(focus.zoom - z) < 0.01 ? .on : .off
             fsMenu.addItem(m)
         }
         fs.submenu = fsMenu
         settings.addItem(fs)
-        let fd = NSMenuItem(title: "Focus Darkness", action: nil, keyEquivalent: "")
-        let fdMenu = NSMenu()
-        for d in [0, 0.25, 0.5, 0.75, 0.9] {
-            let m = NSMenuItem(title: d == 0 ? "None" : "\(Int(d * 100)) %", action: #selector(setFocusShade(_:)), keyEquivalent: "")
-            m.target = self; m.representedObject = d; m.state = abs(focus.shade - d) < 0.01 ? .on : .off
-            fdMenu.addItem(m)
-        }
-        fd.submenu = fdMenu
-        settings.addItem(fd)
         menu.addItem(.separator())
         // Workspaces: click opens; hold Option to delete.
         let ws = NSMenuItem(title: "Workspaces", action: nil, keyEquivalent: "")
@@ -84,13 +75,13 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(ws)
         menu.addItem(.separator())
         let more = NSMenu()
-        let code = NSMenuItem(title: "", action: #selector(pickCoding), keyEquivalent: "c")
+        let code = NSMenuItem(title: "Coding", action: #selector(pickCoding), keyEquivalent: "c")
         code.image = icon(coding)
         code.setAccessibilityLabel("Coding"); code.toolTip = "Coding"
         code.keyEquivalentModifierMask = [.control, .option]; code.target = self
         more.addItem(code)
         for (i, l) in layouts.enumerated() {
-            let m = NSMenuItem(title: "", action: #selector(pick(_:)), keyEquivalent: "")
+            let m = NSMenuItem(title: name(l), action: #selector(pick(_:)), keyEquivalent: "")
             m.image = icon(l)
             m.setAccessibilityLabel(name(l))
             m.toolTip = name(l)
@@ -148,7 +139,7 @@ final class App: NSObject, NSApplicationDelegate {
         var tiles: [NSRect] = []
         if rows == coding {
             // Big browser tile on the left, two stacked on the right.
-            let split = 36, hs = parts(h, 2)
+            let split = Int((Double(w) * 0.3).rounded()) * 2, hs = parts(h, 2)
             tiles = [NSRect(x: 0, y: 0, width: split, height: h),
                      NSRect(x: split + cut, y: 0, width: w - split - cut, height: hs[0]),
                      NSRect(x: split + cut, y: hs[0] + cut, width: w - split - cut, height: hs[1])]
@@ -212,13 +203,10 @@ final class App: NSObject, NSApplicationDelegate {
 
     // A new focus zoom shows right away when focus is on.
     @objc func setFocusZoom(_ m: NSMenuItem) { focus.zoom = m.representedObject as? Double ?? 2; refocus() }
-    // A new darkness shows right away when focus is on.
-    @objc func setFocusShade(_ m: NSMenuItem) { focus.shade = m.representedObject as? Double ?? 0.75; rebuild() }
     func refocus() {
         rebuild()
         guard focus.active else { return }
-        _ = focus.end()
-        DispatchQueue.main.asyncAfter(deadline: .now() + glideTime + 0.1) { _ = self.focus.start(); self.rebuild() }
+        _ = focus.end { _ = self.focus.start(); self.rebuild() }
     }
 
     @objc func openWorkspace(_ m: NSMenuItem) {
