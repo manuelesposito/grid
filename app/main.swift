@@ -18,11 +18,6 @@ final class App: NSObject, NSApplicationDelegate {
         UserDefaults.standard.register(defaults: ["gap": 8.0])
         item.button?.image = icon(coding, w: 36, h: 28, radius: 6)
         item.button?.setAccessibilityLabel("Grid")
-        // Start at login, once; the menu can turn it off.
-        if !UserDefaults.standard.bool(forKey: "loginSet") {
-            try? SMAppService.mainApp.register()
-            UserDefaults.standard.set(true, forKey: "loginSet")
-        }
         rebuild()
         registerHotKeys()
         waiting.start()
