@@ -4,7 +4,7 @@ A small menu bar tool for the Mac that arranges your windows in tidy rows, with 
 
 - **Layouts:** pick one from the menu, or press Control-Option-1 to 9. Control-Option-0 chooses one for you.
 - **Coding:** the browser on the left, terminals stacked on the right (Control-Option-C).
-- **Custom:** any number of windows per row.
+- **Custom:** up to four rows, each with your own number of windows.
 - **Focus:** the front window moves to the middle and everything behind it goes dark (Control-Option-F).
   Switch to another window and Focus follows.
 - **Workspaces:** save the windows on the screen and open them again later.
