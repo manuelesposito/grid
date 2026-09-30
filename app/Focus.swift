@@ -15,6 +15,9 @@ final class Focus {
     var before = CGRect.zero
     var target = CGRect.zero
     var blur: NSWindow?
+    // The same cover on every other screen, and the dark layer of each.
+    var others: [NSWindow] = []
+    var shades: [NSView] = []
     var zooming = false
     var terminal = ""
     var observer: NSObjectProtocol?
@@ -24,9 +27,17 @@ final class Focus {
         get { UserDefaults.standard.object(forKey: "focusZoom") as? Double ?? 2 }
         set { UserDefaults.standard.set(newValue, forKey: "focusZoom") }
     }
+    // Setting from the menu: how dark the background gets on top of the blur; 0 = blur only.
+    var shade: Double {
+        get { UserDefaults.standard.object(forKey: "focusShade") as? Double ?? 0.75 }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "focusShade")
+            shades.forEach { $0.layer?.backgroundColor = NSColor.black.withAlphaComponent(newValue).cgColor }
+        }
+    }
     var textStep = 0.0
     var cellsBefore: [String: Cells] = [:], keepRows = true
-    let zoomTime = 0.26, fadeTime = 0.12
+    let zoomTime = 0.26, fadeTime = 0.12, blurTime = 0.14
 
     var active: Bool { window != nil }
 
@@ -68,24 +79,20 @@ final class Focus {
                 terminal = script("tell application \"Ghostty\" to get id of focused terminal of selected tab of front window")?.stringValue ?? ""
                 keepRows = size.height < vf.height
             }
+        } else if zoom > 1 {
+            // Other apps: the window itself grows, when it can; what it shows stays the app's business.
+            var settable: DarwinBoolean = false
+            AXUIElementIsAttributeSettable(w, kAXSizeAttribute as CFString, &settable)
+            if settable.boolValue { size = CGSize(width: min((frame.width * zoom).rounded(), vf.width), height: (frame.height * zoom).rounded()) }
         }
         size.height = min(size.height, vf.height)
         target = centred(size, on: CGPoint(x: vf.midX, y: vf.midY))
 
-        // The blur covers the whole screen.
-        let b = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        b.isOpaque = false; b.backgroundColor = .clear; b.hasShadow = false; b.animationBehavior = .none
-        let view = BlurView()
-        view.material = .fullScreenUI; view.blendingMode = .behindWindow; view.state = .active
-        view.onClick = { [weak self] in _ = self?.toggle() }
-        // Much darker than the blur alone, but not black: what lies behind stays just visible.
-        let shade = NSView(frame: view.bounds)
-        shade.autoresizingMask = [.width, .height]; shade.wantsLayer = true
-        shade.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.75).cgColor
-        view.addSubview(shade)
-        b.contentView = view
-        b.alphaValue = 0
+        // The blur covers every screen.
+        shades = []
+        let b = cover(screen)
         blur = b
+        others = NSScreen.screens.filter { $0 != screen }.map(cover)
 
         // Switching to another app ends focus.
         observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
@@ -95,20 +102,47 @@ final class Focus {
 
         if textStep == 0 {
             // Nothing re-wraps: the real window can glide.
-            b.order(.below, relativeTo: Int(id))
-            fade(b, to: 1)
-            glide([(w, frame, target)])
+            for c in [b] + others { c.order(.below, relativeTo: Int(id)); fade(c, to: 1) }
+            glide([(w, frame, target)]) {
+                // A window that did not take the whole size still sits in the middle.
+                guard self.window != nil, self.windowID == id, let f = axFrame(w),
+                      abs(f.width - self.target.width) > 2 || abs(f.height - self.target.height) > 2 else { return }
+                self.target = self.centred(f.size, on: CGPoint(x: self.target.midX, y: self.target.midY))
+                place(w, self.target)
+            }
             return true
         }
         // Slide to the middle at the same size, then grow there in one soft fade.
+        // The pictures for that fade are taken on the way, so the growing starts as the window lands:
+        // the window's own at once, the still of the screen as soon as the blur is fully there.
         let middle = centred(frame.size, on: CGPoint(x: target.midX, y: target.midY))
         zooming = true
+        let first = Task { @MainActor in await self.shot(id) }
+        var still: Task<CGImage?, Never>?
+        for c in others { c.order(.below, relativeTo: Int(id)); fade(c, to: 1, time: blurTime) }
         b.order(.below, relativeTo: Int(id))
-        fade(b, to: 1)
+        fade(b, to: 1, time: blurTime) { still = Task { @MainActor in await self.screenshot(b.frame, without: id) } }
         glide([(w, frame, middle)]) {
-            self.swap(w, to: self.target, font: "increase_font_size:\(self.textStep)", opening: true, cover: b) {}
+            self.swap(w, to: self.target, font: "increase_font_size:\(self.textStep)", opening: true, cover: b, early: still.map { (first, $0) }) {}
         }
         return true
+    }
+
+    // Blur and a dark layer over one whole screen; a click on it ends focus.
+    func cover(_ screen: NSScreen) -> NSWindow {
+        let b = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        b.isOpaque = false; b.backgroundColor = .clear; b.hasShadow = false; b.animationBehavior = .none
+        let view = BlurView()
+        view.material = .fullScreenUI; view.blendingMode = .behindWindow; view.state = .active
+        view.onClick = { [weak self] in _ = self?.toggle() }
+        let dark = NSView(frame: view.bounds)
+        dark.autoresizingMask = [.width, .height]; dark.wantsLayer = true
+        dark.layer?.backgroundColor = NSColor.black.withAlphaComponent(shade).cgColor
+        view.addSubview(dark)
+        shades.append(dark)
+        b.contentView = view
+        b.alphaValue = 0
+        return b
     }
 
     func end() -> Bool {
@@ -122,11 +156,12 @@ final class Focus {
         observer = nil
         let from = axFrame(w) ?? target
         let step = textStep
-        window = nil; blur = nil; textStep = 0
+        let covers = [b] + others
+        window = nil; blur = nil; others = []; shades = []; textStep = 0
         app?.activate()
         if step == 0 {
             glide([(w, from, before)])
-            fade(b, to: 0) { b.orderOut(nil) }
+            for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
             return true
         }
         // Shrink in the middle in one soft fade, then slide back home while the blur clears.
@@ -134,20 +169,28 @@ final class Focus {
         swap(w, to: small, font: "decrease_font_size:\(step)", opening: false, cover: b) {
             self.zooming = true
             glide([(w, small, self.before)]) { self.zooming = false }
-            self.fade(b, to: 0) { b.orderOut(nil) }
+            for c in covers { self.fade(c, to: 0) { c.orderOut(nil) } }
         }
         return true
     }
 
     // The window changes size and text in place. Grid covers it with its picture and a still of the screen
     // without it, changes it unseen, takes a new picture and fades from the old to the new.
-    func swap(_ w: AXUIElement, to b: CGRect, font: String, opening: Bool, cover: NSWindow, done: @escaping () -> Void) {
+    func swap(_ w: AXUIElement, to b: CGRect, font: String, opening: Bool, cover: NSWindow,
+              early: (Task<Shot?, Never>, Task<CGImage?, Never>)? = nil, done: @escaping () -> Void) {
         let id = windowID
         zooming = true
         Task { @MainActor in
-            async let first = shot(id)
-            async let screen = screenshot(cover.frame, without: id)
-            let (old, still) = await (first, screen)
+            var old: Shot?, still: CGImage?
+            if let early {
+                (old, still) = await (early.0.value, early.1.value)
+                // Taken on the way: the picture belongs where the window has come to rest.
+                if let o = old, let f = axFrame(w) { old = Shot(image: o.image, box: o.box, frame: f, scale: o.scale) }
+            } else {
+                async let first = shot(id)
+                async let screen = screenshot(cover.frame, without: id)
+                (old, still) = await (first, screen)
+            }
             let changeReal = {
                 if !self.terminal.isEmpty {
                     script("tell application \"Ghostty\" to perform action \"\(font)\" on terminal id \(quoted(self.terminal))")
@@ -239,8 +282,8 @@ final class Focus {
         return try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
     }
 
-    func fade(_ w: NSWindow, to alpha: CGFloat, done: (() -> Void)? = nil) {
-        NSAnimationContext.runAnimationGroup({ $0.duration = alpha == 0 && w !== blur ? fadeTime : zoomTime; w.animator().alphaValue = alpha }) { done?() }
+    func fade(_ w: NSWindow, to alpha: CGFloat, time: Double? = nil, done: (() -> Void)? = nil) {
+        NSAnimationContext.runAnimationGroup({ $0.duration = time ?? (alpha == 0 && w !== blur ? fadeTime : zoomTime); w.animator().alphaValue = alpha }) { done?() }
     }
 
     func centred(_ size: CGSize, on c: CGPoint) -> CGRect {

@@ -53,6 +53,15 @@ final class App: NSObject, NSApplicationDelegate {
         }
         fs.submenu = fsMenu
         menu.addItem(fs)
+        let fd = NSMenuItem(title: "Focus Darkness", action: nil, keyEquivalent: "")
+        let fdMenu = NSMenu()
+        for d in [0, 0.25, 0.5, 0.75, 0.9] {
+            let m = NSMenuItem(title: d == 0 ? "None" : "\(Int(d * 100)) %", action: #selector(setFocusShade(_:)), keyEquivalent: "")
+            m.target = self; m.representedObject = d; m.state = abs(focus.shade - d) < 0.01 ? .on : .off
+            fdMenu.addItem(m)
+        }
+        fd.submenu = fdMenu
+        menu.addItem(fd)
         menu.addItem(.separator())
         // Workspaces: click opens; hold Option to delete.
         let ws = NSMenuItem(title: "Workspaces", action: nil, keyEquivalent: "")
@@ -188,6 +197,8 @@ final class App: NSObject, NSApplicationDelegate {
 
     // A new focus zoom shows right away when focus is on.
     @objc func setFocusZoom(_ m: NSMenuItem) { focus.zoom = m.representedObject as? Double ?? 2; refocus() }
+    // A new darkness shows right away when focus is on.
+    @objc func setFocusShade(_ m: NSMenuItem) { focus.shade = m.representedObject as? Double ?? 0.75; rebuild() }
     func refocus() {
         rebuild()
         guard focus.active else { return }
