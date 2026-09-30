@@ -16,7 +16,8 @@ final class App: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         UserDefaults.standard.register(defaults: ["gap": 8.0])
-        item.button?.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Grid")
+        item.button?.image = icon([2, 2], w: 36, h: 28, radius: 6)
+        item.button?.setAccessibilityLabel("Grid")
         // Start at login, once; the menu can turn it off.
         if !UserDefaults.standard.bool(forKey: "loginSet") {
             try? SMAppService.mainApp.register()
@@ -44,6 +45,8 @@ final class App: NSObject, NSApplicationDelegate {
         let f = NSMenuItem(title: "Focus", action: #selector(toggleFocus), keyEquivalent: "f")
         f.keyEquivalentModifierMask = [.control, .option]; f.target = self; f.state = focus.active ? .on : .off
         menu.addItem(f)
+        // Everything that is set once and left alone sits together.
+        let settings = NSMenu()
         let fs = NSMenuItem(title: "Focus Zoom", action: nil, keyEquivalent: "")
         let fsMenu = NSMenu()
         for z in [1, 1.25, 1.5, 1.75, 2] {
@@ -52,7 +55,7 @@ final class App: NSObject, NSApplicationDelegate {
             fsMenu.addItem(m)
         }
         fs.submenu = fsMenu
-        menu.addItem(fs)
+        settings.addItem(fs)
         let fd = NSMenuItem(title: "Focus Darkness", action: nil, keyEquivalent: "")
         let fdMenu = NSMenu()
         for d in [0, 0.25, 0.5, 0.75, 0.9] {
@@ -61,7 +64,7 @@ final class App: NSObject, NSApplicationDelegate {
             fdMenu.addItem(m)
         }
         fd.submenu = fdMenu
-        menu.addItem(fd)
+        settings.addItem(fd)
         menu.addItem(.separator())
         // Workspaces: click opens; hold Option to delete.
         let ws = NSMenuItem(title: "Workspaces", action: nil, keyEquivalent: "")
@@ -113,13 +116,17 @@ final class App: NSObject, NSApplicationDelegate {
             sub.addItem(m)
         }
         g.submenu = sub
-        menu.addItem(g)
+        settings.addItem(g)
         let wt = NSMenuItem(title: "Mark Waiting Claude Windows", action: #selector(toggleWaiting), keyEquivalent: "")
         wt.target = self; wt.state = waiting.enabled ? .on : .off
-        menu.addItem(wt)
+        settings.addItem(.separator())
+        settings.addItem(wt)
         let l = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin), keyEquivalent: "")
         l.target = self; l.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        menu.addItem(l)
+        settings.addItem(l)
+        let set = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        set.submenu = settings
+        menu.addItem(set)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q")
         item.menu = menu
@@ -131,8 +138,8 @@ final class App: NSObject, NSApplicationDelegate {
 
     // A small picture of the layout: the screen as one solid rounded shape, split by fine cuts.
     // Drawn in half points, the pixels of the screen, so every edge sits on a whole pixel.
-    func icon(_ rows: [Int]) -> NSImage {
-        let w = 60, h = 38, cut = 2
+    func icon(_ rows: [Int], w: Int = 60, h: Int = 38, radius: CGFloat = 7) -> NSImage {
+        let cut = 2
         // Whole-pixel sizes for n parts with cuts between them.
         func parts(_ total: Int, _ n: Int) -> [Int] {
             let room = total - cut * (n - 1)
@@ -158,7 +165,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         let img = NSImage(size: NSSize(width: w / 2, height: h / 2), flipped: true) { _ in
             let half = NSAffineTransform(); half.scale(by: 0.5); half.concat()
-            NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: h), xRadius: 7, yRadius: 7).addClip()
+            NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: h), xRadius: radius, yRadius: radius).addClip()
             NSColor.black.setFill()
             for tile in tiles { NSBezierPath(roundedRect: tile, xRadius: 1, yRadius: 1).fill() }
             return true
@@ -246,7 +253,11 @@ final class App: NSObject, NSApplicationDelegate {
             self.rebuild()
         }
     }
-    @objc func toggleFocus() { if !focus.toggle() { NSSound.beep() }; rebuild() }
+    // The menu is rebuilt once the window has landed: building it takes a moment, and the animation would wait.
+    @objc func toggleFocus() {
+        if !focus.toggle() { NSSound.beep() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.rebuild() }
+    }
     @objc func toggleWaiting() { waiting.enabled.toggle(); rebuild() }
 
     // Empty rows = automatic, [0] = coding.

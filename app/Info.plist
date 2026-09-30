@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleExecutable</key>
 	<string>Grid</string>
+	<key>CFBundleIconFile</key>
+	<string>Grid</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.manuel.grid</string>
 	<key>CFBundleName</key>

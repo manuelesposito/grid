@@ -20,6 +20,8 @@ final class Focus {
     var shades: [NSView] = []
     var zooming = false
     var terminal = ""
+    // Reads what the terminal is and how many lines it holds, beside the main thread, while the window slides.
+    var prepared: Task<Void, Never>?
     var observer: NSObjectProtocol?
 
     // Setting from the menu: how many times bigger the terminal gets.
@@ -37,7 +39,7 @@ final class Focus {
     }
     var textStep = 0.0
     var cellsBefore: [String: Cells] = [:], keepRows = true
-    let zoomTime = 0.26, fadeTime = 0.12, blurTime = 0.14
+    let zoomTime = 0.26, fadeTime = 0.12, blurTime = 0.13, closeTime = 0.4
 
     var active: Bool { window != nil }
 
@@ -74,9 +76,14 @@ final class Focus {
                 // Text grows by the same factor as the window, in steps of half a point.
                 textStep = (ghosttySetting("font-size", 13) * (z - 1) * 2).rounded() / 2
                 // The terminal of this window is the one whose size changes; remember all sizes now.
-                cellsBefore = ghosttyCells()
                 // The text change must reach this terminal, even if another window is in front by then.
-                terminal = script("tell application \"Ghostty\" to get id of focused terminal of selected tab of front window")?.stringValue ?? ""
+                // Both take a moment, so they are read aside: the window starts to move at once.
+                terminal = ""
+                prepared = Task { @MainActor in
+                    async let cells = Task.detached { ghosttyCells() }.value
+                    async let id = scriptAside("tell application \"Ghostty\" to get id of focused terminal of selected tab of front window")
+                    (self.cellsBefore, self.terminal) = await (cells, id)
+                }
                 keepRows = size.height < vf.height
             }
         } else if zoom > 1 {
@@ -158,25 +165,28 @@ final class Focus {
         let step = textStep
         let covers = [b] + others
         window = nil; blur = nil; others = []; shades = []; textStep = 0
-        app?.activate()
+        // Bringing an app forward that is in front already makes it busy for a moment, and the slide home waits.
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != app?.processIdentifier { app?.activate() }
         if step == 0 {
             glide([(w, from, before)])
             for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
             return true
         }
-        // Shrink in the middle in one soft fade, then slide back home while the blur clears.
+        // The blur starts to clear at once, so the key feels answered. Meanwhile the window shrinks
+        // in the middle in one soft fade, then slides back home.
+        for c in covers { fade(c, to: 0, time: closeTime) { c.orderOut(nil) } }
         let small = centred(before.size, on: CGPoint(x: from.midX, y: from.midY))
-        swap(w, to: small, font: "decrease_font_size:\(step)", opening: false, cover: b) {
+        swap(w, to: small, font: "decrease_font_size:\(step)", opening: false, cover: nil) {
             self.zooming = true
             glide([(w, small, self.before)]) { self.zooming = false }
-            for c in covers { self.fade(c, to: 0) { c.orderOut(nil) } }
         }
         return true
     }
 
     // The window changes size and text in place. Grid covers it with its picture and a still of the screen
     // without it, changes it unseen, takes a new picture and fades from the old to the new.
-    func swap(_ w: AXUIElement, to b: CGRect, font: String, opening: Bool, cover: NSWindow,
+    // A shrinking window stays under its old, bigger picture all the time: no still needed, and no cover given.
+    func swap(_ w: AXUIElement, to b: CGRect, font: String, opening: Bool, cover: NSWindow?,
               early: (Task<Shot?, Never>, Task<CGImage?, Never>)? = nil, done: @escaping () -> Void) {
         let id = windowID
         zooming = true
@@ -186,14 +196,19 @@ final class Focus {
                 (old, still) = await (early.0.value, early.1.value)
                 // Taken on the way: the picture belongs where the window has come to rest.
                 if let o = old, let f = axFrame(w) { old = Shot(image: o.image, box: o.box, frame: f, scale: o.scale) }
-            } else {
+            } else if let cover {
                 async let first = shot(id)
                 async let screen = screenshot(cover.frame, without: id)
                 (old, still) = await (first, screen)
+            } else {
+                old = await shot(id)
             }
-            let changeReal = {
+            await self.prepared?.value
+            func changeReal() async {
                 if !self.terminal.isEmpty {
-                    script("tell application \"Ghostty\" to perform action \"\(font)\" on terminal id \(quoted(self.terminal))")
+                    let source = "tell application \"Ghostty\" to perform action \"\(font)\" on terminal id \(quoted(self.terminal))"
+                    // On the way out the blur is clearing meanwhile; a wait on the main thread would stop it for a moment.
+                    if opening { script(source) } else { await scriptAside(source) }
                 }
                 place(w, b)
                 if opening, !self.cellsBefore.isEmpty {
@@ -201,36 +216,39 @@ final class Focus {
                 }
             }
             let finish = { self.zooming = false; done() }
-            guard let old, let still else { changeReal(); finish(); return }
+            guard let old, cover == nil || still != nil else { await changeReal(); finish(); return }
 
             // A hair see-through, so macOS never counts the window behind as hidden: a hidden terminal stops
             // drawing and shows up blank for a moment when uncovered.
-            let backdrop = self.overlay(cover.frame)
-            let v = NSView(); v.wantsLayer = true; v.layer?.contents = still; v.layer?.contentsGravity = .resize
-            backdrop.contentView = v
-            backdrop.order(.above, relativeTo: Int(id))
+            var backdrop: NSWindow?
+            if let cover {
+                let back = self.overlay(cover.frame)
+                let v = NSView(); v.wantsLayer = true; v.layer?.contents = still; v.layer?.contentsGravity = .resize
+                back.contentView = v
+                back.order(.above, relativeTo: Int(id))
+                backdrop = back
+            }
             let from = self.picture(old)
-            from.order(.above, relativeTo: backdrop.windowNumber)
+            from.order(.above, relativeTo: backdrop?.windowNumber ?? Int(id))
 
-            changeReal()
-            try? await Task.sleep(for: .milliseconds(60))
+            await changeReal()
+            guard opening else {
+                // Shrunk, the real window lies whole under its old, bigger picture: the picture just fades away.
+                try? await Task.sleep(for: .milliseconds(40))
+                self.fade(from, to: 0, time: self.fadeTime + 0.06) { from.orderOut(nil); finish() }
+                return
+            }
+            // Matching the lines has waited for the window already, unless it had to nudge it once more.
+            if self.cellsBefore.isEmpty || self.target != b { try? await Task.sleep(for: .milliseconds(60)) }
             guard let new = await shot(id) else {
-                backdrop.orderOut(nil); from.orderOut(nil); finish(); return
+                backdrop?.orderOut(nil); from.orderOut(nil); finish(); return
             }
-            // The bigger picture lies on top and fades: in when growing, out when shrinking.
+            // The bigger picture lies on top and fades in.
             let to = self.picture(new)
-            if opening {
-                to.alphaValue = 0
-                to.order(.above, relativeTo: from.windowNumber)
-            } else {
-                to.order(.below, relativeTo: from.windowNumber)
-            }
-            NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = self.fadeTime + 0.06
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                if opening { to.animator().alphaValue = 0.99 } else { from.animator().alphaValue = 0 }
-            }) {
-                backdrop.orderOut(nil); from.orderOut(nil); to.orderOut(nil)
+            to.alphaValue = 0
+            to.order(.above, relativeTo: from.windowNumber)
+            self.fade(to, to: 0.99, time: self.fadeTime + 0.06) {
+                backdrop?.orderOut(nil); from.orderOut(nil); to.orderOut(nil)
                 finish()
             }
         }
@@ -282,8 +300,20 @@ final class Focus {
         return try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
     }
 
+    // Grid steps the fade itself, in time with the slide. Left to macOS, a fade that starts on a window
+    // just put on screen shows its first third in one jump.
     func fade(_ w: NSWindow, to alpha: CGFloat, time: Double? = nil, done: (() -> Void)? = nil) {
-        NSAnimationContext.runAnimationGroup({ $0.duration = time ?? (alpha == 0 && w !== blur ? fadeTime : zoomTime); w.animator().alphaValue = alpha }) { done?() }
+        let duration = time ?? (alpha == 0 && w !== blur ? fadeTime : zoomTime)
+        let from = w.alphaValue
+        var start: Date?
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in
+            // The clock starts with the first tick, when the window is really there.
+            let s = start ?? Date(); start = s
+            let t = min(1, Date().timeIntervalSince(s) / duration), e = 1 - (1 - t) * (1 - t)
+            w.alphaValue = from + (alpha - from) * e
+            if t >= 1 { timer.invalidate(); done?() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func centred(_ size: CGSize, on c: CGPoint) -> CGRect {

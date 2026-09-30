@@ -32,10 +32,14 @@ func pause(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInte
 func matchCells(_ w: AXUIElement, frame: CGRect, before: [String: Cells], keepRows: Bool, centre: CGPoint) -> CGRect {
     var frame = frame
     var tty: String?
+    var same = 0
     for _ in 0..<6 {
-        pause(0.04)
+        pause(0.03)
         let now = ghosttyCells()
         if tty == nil { tty = now.first { before[$0.key] != nil && before[$0.key] != $0.value }?.key }
+        // No terminal differs from before: this one holds its old lines already. Seen twice, so a change
+        // still on its way is not missed.
+        if tty == nil { same += 1; if same == 2 { break } }
         // The wanted size is the one this terminal had before.
         guard let tty, let cells = now[tty], let want = before[tty] else { continue }
         let dc = want.cols - cells.cols, dr = keepRows ? want.rows - cells.rows : 0
