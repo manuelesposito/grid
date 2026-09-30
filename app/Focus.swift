@@ -1,6 +1,7 @@
 // Focus: the front window moves to the middle and everything behind it blurs.
 // A Ghostty window grows with its text by the same factor, so every line keeps its length;
-// when it would be too tall, only the height gives way. The same key, a click on the blur, or switching apps ends it.
+// when it would be too tall, only the height gives way. The same key or a click on the blur ends it;
+// switching to another window takes focus along.
 //
 // A terminal slides to the middle at its size, then grows there in one soft fade: Grid covers it with its picture,
 // changes size and text once, unseen, and fades to a picture of the result, which is exactly the real window.
@@ -23,6 +24,11 @@ final class Focus {
     // Reads what the terminal is and how many lines it holds, beside the main thread, while the window slides.
     var prepared: Task<Void, Never>?
     var observer: NSObjectProtocol?
+    // Tells when the app's front window changes, and whether focus is on its way to another window.
+    var watcher: AXObserver?
+    var handing = false
+    // The window as ScreenCaptureKit knows it; looking it up again for every picture takes a moment.
+    var known: SCWindow?
 
     // Setting from the menu: how many times bigger the terminal gets.
     var zoom: Double {
@@ -52,14 +58,21 @@ final class Focus {
         return active ? end() : start()
     }
 
-    func start() -> Bool {
-        guard trusted(), let front = NSWorkspace.shared.frontmostApplication else { return false }
+    // The front window of the front app, when it is a real document window.
+    func frontWindow() -> (app: NSRunningApplication, window: AXUIElement, id: CGWindowID)? {
+        guard let front = NSWorkspace.shared.frontmostApplication else { return nil }
         var value: CFTypeRef?
         AXUIElementCopyAttributeValue(AXUIElementCreateApplication(front.processIdentifier), kAXFocusedWindowAttribute as CFString, &value)
-        guard let value else { return false }
+        guard let value else { return nil }
         let w = value as! AXUIElement
         var id: CGWindowID = 0
-        guard isNormal(w), _AXUIElementGetWindow(w, &id) == .success, let frame = axFrame(w),
+        guard isNormal(w), _AXUIElementGetWindow(w, &id) == .success else { return nil }
+        return (front, w, id)
+    }
+
+    // Covers handed in are still on screen from the window focus comes from.
+    func start(reusing covers: [NSWindow] = []) -> Bool {
+        guard trusted(), let (front, w, id) = frontWindow(), let frame = axFrame(w),
               let screen = NSScreen.screens.max(by: { topLeft($0.frame).intersection(frame).area < topLeft($1.frame).intersection(frame).area }) else { return false }
         window = w; windowID = id; app = front; before = frame
         cellsBefore = [:]
@@ -96,16 +109,23 @@ final class Focus {
         target = centred(size, on: CGPoint(x: vf.midX, y: vf.midY))
 
         // The blur covers every screen.
-        shades = []
-        let b = cover(screen)
+        let b: NSWindow
+        if covers.isEmpty {
+            shades = []
+            b = cover(screen)
+            others = NSScreen.screens.filter { $0 != screen }.map(cover)
+        } else {
+            b = covers.first { $0.frame == screen.frame } ?? covers[0]
+            others = covers.filter { $0 !== b }
+        }
         blur = b
-        others = NSScreen.screens.filter { $0 != screen }.map(cover)
 
-        // Switching to another app ends focus.
+        // Switching to another app, or to another window of this one, takes focus along.
         observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
             let other = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            if let self, other?.processIdentifier != self.app?.processIdentifier, other?.processIdentifier != ProcessInfo.processInfo.processIdentifier { _ = self.end() }
+            if let self, other?.processIdentifier != self.app?.processIdentifier, other?.processIdentifier != ProcessInfo.processInfo.processIdentifier { self.handOver() }
         }
+        watch(front.processIdentifier)
 
         if textStep == 0 {
             // Nothing re-wraps: the real window can glide.
@@ -124,7 +144,7 @@ final class Focus {
         // the window's own at once, the still of the screen as soon as the blur is fully there.
         let middle = centred(frame.size, on: CGPoint(x: target.midX, y: target.midY))
         zooming = true
-        let first = Task { @MainActor in await self.shot(id) }
+        let first = Task { @MainActor in await self.shot(id, w) }
         var still: Task<CGImage?, Never>?
         for c in others { c.order(.below, relativeTo: Int(id)); fade(c, to: 1, time: blurTime) }
         b.order(.below, relativeTo: Int(id))
@@ -152,23 +172,80 @@ final class Focus {
         return b
     }
 
-    func end() -> Bool {
+    // Focus moves on to the window that has just come to the front: the covers stay, the old window
+    // goes home behind them, then the new one comes to the middle. Without a real window in front, focus ends.
+    func handOver() {
+        guard active, !handing else { return }
+        if zooming {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.handOver() }
+            return
+        }
+        guard let next = frontWindow(), next.id != windowID, let b = blur else {
+            if frontWindow()?.id != windowID { _ = end(keeping: false, staying: true) }
+            return
+        }
+        handing = true
+        movingUntil = Date().addingTimeInterval(0.8)
+        quietUntil = Date().addingTimeInterval(1.5)
+        let covers = [b] + others
+        for c in covers { c.order(.below, relativeTo: Int(next.id)) }
+        _ = end(keeping: true) {
+            self.handing = false
+            if !self.start(reusing: covers) {
+                self.shades = []
+                for c in covers { self.fade(c, to: 0) { c.orderOut(nil) } }
+            }
+        }
+    }
+
+    // Calls back when another window of the focused app comes to the front.
+    func watch(_ pid: pid_t) {
+        var o: AXObserver?
+        AXObserverCreate(pid, { _, _, _, me in
+            let focus = Unmanaged<Focus>.fromOpaque(me!).takeUnretainedValue()
+            // Sheets and dialogs are no new place for focus; a real window is.
+            DispatchQueue.main.async { if let next = focus.frontWindow(), next.id != focus.windowID { focus.handOver() } }
+        }, &o)
+        guard let o else { return }
+        AXObserverAddNotification(o, AXUIElementCreateApplication(pid), kAXFocusedWindowChangedNotification as CFString, Unmanaged.passUnretained(self).toOpaque())
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(o), .commonModes)
+        watcher = o
+    }
+
+    // Keeping = the covers stay for the next window. Staying = the app in front stays in front,
+    // for when the person has just switched to it.
+    func end(keeping: Bool = false, staying: Bool = false, done: (() -> Void)? = nil) -> Bool {
         // A switch of app or a click while the window is still zooming ends focus once it has landed.
         if zooming {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { _ = self.end() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { _ = self.end(keeping: keeping, staying: staying, done: done) }
             return true
         }
         guard let w = window, let b = blur else { return false }
         if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         observer = nil
+        if let watcher { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(watcher), .commonModes) }
+        watcher = nil
         let from = axFrame(w) ?? target
         let step = textStep
-        let covers = [b] + others
-        window = nil; blur = nil; others = []; shades = []; textStep = 0
-        // Bringing an app forward that is in front already makes it busy for a moment, and the slide home waits.
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier != app?.processIdentifier { app?.activate() }
+        let covers = keeping ? [] : [b] + others
+        window = nil; blur = nil; others = []; textStep = 0
+        if !keeping { shades = [] }
+        if !keeping && !staying {
+            // Bringing an app forward that is in front already makes it busy for a moment, and the slide home waits.
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier != app?.processIdentifier { app?.activate() }
+        }
+        if keeping {
+            // Behind the covers nobody watches: the window goes home while the next one is already on its way,
+            // a grown terminal in one step.
+            if step == 0 { glide([(w, from, before)]) } else {
+                if !terminal.isEmpty { script("tell application \"Ghostty\" to perform action \"decrease_font_size:\(step)\" on terminal id \(quoted(terminal))") }
+                place(w, before)
+            }
+            done?()
+            return true
+        }
         if step == 0 {
-            glide([(w, from, before)])
+            glide([(w, from, before)]) { done?() }
             for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
             return true
         }
@@ -178,7 +255,7 @@ final class Focus {
         let small = centred(before.size, on: CGPoint(x: from.midX, y: from.midY))
         swap(w, to: small, font: "decrease_font_size:\(step)", opening: false, cover: nil) {
             self.zooming = true
-            glide([(w, small, self.before)]) { self.zooming = false }
+            glide([(w, small, self.before)]) { self.zooming = false; done?() }
         }
         return true
     }
@@ -197,11 +274,11 @@ final class Focus {
                 // Taken on the way: the picture belongs where the window has come to rest.
                 if let o = old, let f = axFrame(w) { old = Shot(image: o.image, box: o.box, frame: f, scale: o.scale) }
             } else if let cover {
-                async let first = shot(id)
+                async let first = shot(id, w)
                 async let screen = screenshot(cover.frame, without: id)
                 (old, still) = await (first, screen)
             } else {
-                old = await shot(id)
+                old = await shot(id, w)
             }
             await self.prepared?.value
             func changeReal() async {
@@ -234,13 +311,13 @@ final class Focus {
             await changeReal()
             guard opening else {
                 // Shrunk, the real window lies whole under its old, bigger picture: the picture just fades away.
-                try? await Task.sleep(for: .milliseconds(40))
-                self.fade(from, to: 0, time: self.fadeTime + 0.06) { from.orderOut(nil); finish() }
+                try? await Task.sleep(for: .milliseconds(25))
+                self.fade(from, to: 0, time: self.fadeTime + 0.02) { from.orderOut(nil); finish() }
                 return
             }
             // Matching the lines has waited for the window already, unless it had to nudge it once more.
             if self.cellsBefore.isEmpty || self.target != b { try? await Task.sleep(for: .milliseconds(60)) }
-            guard let new = await shot(id) else {
+            guard let new = await shot(id, w) else {
                 backdrop?.orderOut(nil); from.orderOut(nil); finish(); return
             }
             // The bigger picture lies on top and fades in.
@@ -273,18 +350,23 @@ final class Focus {
     }
 
     // The window with its shadow, at its real size.
-    func shot(_ id: CGWindowID) async -> Shot? {
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true),
-              let win = content.windows.first(where: { $0.windowID == id }) else { return nil }
+    func shot(_ id: CGWindowID, _ w: AXUIElement) async -> Shot? {
+        var win = known
+        if win?.windowID != id {
+            win = (try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true))?.windows.first { $0.windowID == id }
+            known = win
+        }
+        // The size comes from the window itself: what ScreenCaptureKit remembers is from the first look.
+        guard let win, let frame = axFrame(w) else { return nil }
         let filter = SCContentFilter(desktopIndependentWindow: win)
         let scale = CGFloat(filter.pointPixelScale)
         let config = SCStreamConfiguration()
         config.ignoreShadowsSingleWindow = false; config.showsCursor = false
         // A canvas bigger than window and shadow keeps the picture at its real size.
-        config.width = Int((win.frame.width + 240) * scale); config.height = Int((win.frame.height + 240) * scale)
+        config.width = Int((frame.width + 240) * scale); config.height = Int((frame.height + 240) * scale)
         guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config),
-              let box = solidBox(image), abs(box.width - win.frame.width * scale) <= 1 else { return nil }
-        return Shot(image: image, box: box, frame: win.frame, scale: scale)
+              let box = solidBox(image), abs(box.width - frame.width * scale) <= 1 else { known = nil; return nil }
+        return Shot(image: image, box: box, frame: frame, scale: scale)
     }
 
     // The whole screen with this frame, without one window.
