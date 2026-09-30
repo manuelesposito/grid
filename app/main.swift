@@ -129,11 +129,8 @@ final class App: NSObject, NSApplicationDelegate {
 
     // A small picture of the layout: the screen as one solid rounded shape, split by fine cuts.
     // Drawn in half points, the pixels of the screen, so every edge sits on a whole pixel.
-    // Big = the picture in the Custom dialog: 64 points square, in the colour of the text, and faint while empty.
-    func icon(_ rows: [Int], w: Int = 60, h: Int = 38, radius: CGFloat = 7, big: Bool = false) -> NSImage {
-        let cut = big ? 4 : 2
-        // More windows than the picture can show are left out of it.
-        let rows = rows == coding ? rows : Array(rows.prefix(8)).map { min($0, 16) }
+    func icon(_ rows: [Int], w: Int = 60, h: Int = 38, radius: CGFloat = 7) -> NSImage {
+        let cut = 2
         // Whole-pixel sizes for n parts with cuts between them.
         func parts(_ total: Int, _ n: Int) -> [Int] {
             let room = total - cut * (n - 1)
@@ -157,17 +154,14 @@ final class App: NSObject, NSApplicationDelegate {
                 y += rowH + cut
             }
         }
-        let whole = NSRect(x: 0, y: 0, width: w, height: h)
-        let img = NSImage(size: big ? NSSize(width: 64, height: 64) : NSSize(width: w / 2, height: h / 2), flipped: true) { _ in
-            let half = NSAffineTransform(); half.scale(by: 0.5)
-            if big { half.translateX(by: CGFloat(128 - w) / 2, yBy: CGFloat(128 - h) / 2) }
-            half.concat()
-            NSBezierPath(roundedRect: whole, xRadius: radius, yRadius: radius).addClip()
-            (big ? NSColor.labelColor.withAlphaComponent(tiles.isEmpty ? 0.2 : 0.9) : NSColor.black).setFill()
-            for tile in tiles.isEmpty ? [whole] : tiles { NSBezierPath(roundedRect: tile, xRadius: CGFloat(cut) / 2, yRadius: CGFloat(cut) / 2).fill() }
+        let img = NSImage(size: NSSize(width: w / 2, height: h / 2), flipped: true) { _ in
+            let half = NSAffineTransform(); half.scale(by: 0.5); half.concat()
+            NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: h), xRadius: radius, yRadius: radius).addClip()
+            NSColor.black.setFill()
+            for tile in tiles { NSBezierPath(roundedRect: tile, xRadius: 1, yRadius: 1).fill() }
             return true
         }
-        img.isTemplate = !big
+        img.isTemplate = true
         return img
     }
 
@@ -302,30 +296,22 @@ final class App: NSObject, NSApplicationDelegate {
         rebuild()
     }
 
-    // The picture in the dialog shows the layout as it is typed; Arrange waits for at least one number.
+    // A diagram with one number beside each row; Arrange waits for at least one window.
     @objc func custom() {
         let alert = NSAlert()
-        alert.messageText = "One number per row"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 228, height: 24))
-        field.placeholderString = "3 2"
-        field.stringValue = UserDefaults.standard.string(forKey: "custom") ?? ""
-        alert.accessoryView = field
+        alert.messageText = "Windows per row"
+        let saved = (UserDefaults.standard.string(forKey: "custom") ?? "3 2").split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }.filter { $0 > 0 }
+        let input = RowsInput(rows: saved)
+        alert.accessoryView = input
         let arrange = alert.addButton(withTitle: "Arrange")
         alert.addButton(withTitle: "Cancel")
-        func rows() -> [Int] { field.stringValue.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }.filter { $0 > 0 } }
-        let show = {
-            alert.icon = self.icon(rows(), w: 128, h: 80, radius: 14, big: true)
-            arrange.isEnabled = !rows().isEmpty
-        }
-        let watcher = FieldWatcher(show)
-        field.delegate = watcher
-        show()
+        input.changed = { arrange.isEnabled = !input.rows.isEmpty }
+        input.changed()
         NSApp.activate(ignoringOtherApps: true)
-        alert.window.initialFirstResponder = field
-        // The field holds its watcher only loosely; it must live as long as the dialog is open.
-        guard withExtendedLifetime(watcher, { alert.runModal() }) == .alertFirstButtonReturn, !rows().isEmpty else { return }
-        UserDefaults.standard.set(field.stringValue, forKey: "custom")
-        let picked = rows()
+        alert.window.initialFirstResponder = input.wells[0].field
+        guard alert.runModal() == .alertFirstButtonReturn, !input.rows.isEmpty else { return }
+        let picked = input.rows
+        UserDefaults.standard.set(picked.map(String.init).joined(separator: " "), forKey: "custom")
         NSApp.hide(nil) // hand focus back so the front window stays first
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.run(picked) }
     }
