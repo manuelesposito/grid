@@ -12,7 +12,7 @@ A small menu bar tool for the Mac that arranges your windows in tidy rows, with 
 
 ## Install
 
-1. Unzip `Grid.zip` and move `Grid` into your Applications folder.
+1. Download `Grid.zip` from https://github.com/manuelesposito/grid/releases/latest, unzip it and move `Grid` into your Applications folder.
 2. Open it. A small grid icon appears in the menu bar.
 3. macOS asks for **Accessibility**. Grid needs it to move and resize windows. Allow it in
    System Settings, Privacy & Security, Accessibility.
@@ -28,3 +28,14 @@ Settings, Open at Login in its menu.
 - **Waiting windows.** Claude Code windows that have finished get a coloured edge.
 
 Grid works offline and sends nothing anywhere.
+
+The download is signed and checked by Apple, so it opens with a plain double-click.
+
+## Build it yourself
+
+Grid is a handful of Swift files and needs only Xcode's command line tools. `build.sh` builds the app
+into `~/Applications` and signs it; put the name of your own signing certificate into the script first.
+
+## License
+
+MIT. Free to use, change and share.
