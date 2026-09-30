@@ -129,30 +129,38 @@ final class App: NSObject, NSApplicationDelegate {
         l.count == 1 ? "\(l[0]) in a row" : l.map(String.init).joined(separator: " + ")
     }
 
-    // A small picture of the layout: solid tiles with fine cut-outs between them.
+    // A small picture of the layout: the screen as one solid rounded shape, split by fine cuts.
+    // Drawn in half points, the pixels of the screen, so every edge sits on a whole pixel.
     func icon(_ rows: [Int]) -> NSImage {
-        let size = NSSize(width: 30, height: 19), cut: CGFloat = 1.5
-        let img = NSImage(size: size, flipped: true) { r in
+        let w = 60, h = 38, cut = 2
+        // Whole-pixel sizes for n parts with cuts between them.
+        func parts(_ total: Int, _ n: Int) -> [Int] {
+            let room = total - cut * (n - 1)
+            return (0..<n).map { room / n + ($0 < room % n ? 1 : 0) }
+        }
+        var tiles: [NSRect] = []
+        if rows == coding {
+            // Big browser tile on the left, two stacked on the right.
+            let split = 36, hs = parts(h, 2)
+            tiles = [NSRect(x: 0, y: 0, width: split, height: h),
+                     NSRect(x: split + cut, y: 0, width: w - split - cut, height: hs[0]),
+                     NSRect(x: split + cut, y: hs[0] + cut, width: w - split - cut, height: hs[1])]
+        } else {
+            var y = 0
+            for (rowH, count) in zip(parts(h, rows.count), rows) {
+                var x = 0
+                for colW in parts(w, count) {
+                    tiles.append(NSRect(x: x, y: y, width: colW, height: rowH))
+                    x += colW + cut
+                }
+                y += rowH + cut
+            }
+        }
+        let img = NSImage(size: NSSize(width: w / 2, height: h / 2), flipped: true) { _ in
+            let half = NSAffineTransform(); half.scale(by: 0.5); half.concat()
+            NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: h), xRadius: 7, yRadius: 7).addClip()
             NSColor.black.setFill()
-            if rows == self.coding {
-                // Big browser tile on the left, two stacked on the right.
-                let split = (r.width * 0.6).rounded()
-                let h = (r.height - cut) / 2
-                for tile in [NSRect(x: 0, y: 0, width: split, height: r.height),
-                             NSRect(x: split + cut, y: 0, width: r.width - split - cut, height: h),
-                             NSRect(x: split + cut, y: h + cut, width: r.width - split - cut, height: h)] {
-                    NSBezierPath(roundedRect: tile, xRadius: 1.5, yRadius: 1.5).fill()
-                }
-                return true
-            }
-            let rowH = (r.height - cut * CGFloat(rows.count - 1)) / CGFloat(rows.count)
-            for (ri, count) in rows.enumerated() {
-                let colW = (r.width - cut * CGFloat(count - 1)) / CGFloat(count)
-                for c in 0..<count {
-                    let tile = NSRect(x: CGFloat(c) * (colW + cut), y: CGFloat(ri) * (rowH + cut), width: colW, height: rowH)
-                    NSBezierPath(roundedRect: tile, xRadius: 1.5, yRadius: 1.5).fill()
-                }
-            }
+            for tile in tiles { NSBezierPath(roundedRect: tile, xRadius: 1, yRadius: 1).fill() }
             return true
         }
         img.isTemplate = true
