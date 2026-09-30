@@ -129,8 +129,11 @@ final class App: NSObject, NSApplicationDelegate {
 
     // A small picture of the layout: the screen as one solid rounded shape, split by fine cuts.
     // Drawn in half points, the pixels of the screen, so every edge sits on a whole pixel.
-    func icon(_ rows: [Int], w: Int = 60, h: Int = 38, radius: CGFloat = 7) -> NSImage {
-        let cut = 2
+    // Big = the picture in the Custom dialog: 64 points square, in the colour of the text, and faint while empty.
+    func icon(_ rows: [Int], w: Int = 60, h: Int = 38, radius: CGFloat = 7, big: Bool = false) -> NSImage {
+        let cut = big ? 4 : 2
+        // More windows than the picture can show are left out of it.
+        let rows = rows == coding ? rows : Array(rows.prefix(8)).map { min($0, 16) }
         // Whole-pixel sizes for n parts with cuts between them.
         func parts(_ total: Int, _ n: Int) -> [Int] {
             let room = total - cut * (n - 1)
@@ -154,14 +157,17 @@ final class App: NSObject, NSApplicationDelegate {
                 y += rowH + cut
             }
         }
-        let img = NSImage(size: NSSize(width: w / 2, height: h / 2), flipped: true) { _ in
-            let half = NSAffineTransform(); half.scale(by: 0.5); half.concat()
-            NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: h), xRadius: radius, yRadius: radius).addClip()
-            NSColor.black.setFill()
-            for tile in tiles { NSBezierPath(roundedRect: tile, xRadius: 1, yRadius: 1).fill() }
+        let whole = NSRect(x: 0, y: 0, width: w, height: h)
+        let img = NSImage(size: big ? NSSize(width: 64, height: 64) : NSSize(width: w / 2, height: h / 2), flipped: true) { _ in
+            let half = NSAffineTransform(); half.scale(by: 0.5)
+            if big { half.translateX(by: CGFloat(128 - w) / 2, yBy: CGFloat(128 - h) / 2) }
+            half.concat()
+            NSBezierPath(roundedRect: whole, xRadius: radius, yRadius: radius).addClip()
+            (big ? NSColor.labelColor.withAlphaComponent(tiles.isEmpty ? 0.2 : 0.9) : NSColor.black).setFill()
+            for tile in tiles.isEmpty ? [whole] : tiles { NSBezierPath(roundedRect: tile, xRadius: CGFloat(cut) / 2, yRadius: CGFloat(cut) / 2).fill() }
             return true
         }
-        img.isTemplate = true
+        img.isTemplate = !big
         return img
     }
 
@@ -223,16 +229,20 @@ final class App: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "Save Workspace"
         alert.informativeText = "Saves the windows on this screen, with their places, folders and pages."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 228, height: 24))
         field.placeholderString = "Name, for example Architrave"
         alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
+        let save = alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
+        // Nothing to save under no name.
+        save.isEnabled = false
+        let watcher = FieldWatcher { save.isEnabled = !field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty }
+        field.delegate = watcher
         // Remember the screen before the alert takes the focus.
         let front = NSWorkspace.shared.frontmostApplication
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { front?.activate(); return }
+        guard withExtendedLifetime(watcher, { alert.runModal() }) == .alertFirstButtonReturn else { front?.activate(); return }
         let name = field.stringValue.trimmingCharacters(in: .whitespaces)
         front?.activate()
         guard !name.isEmpty else { return }
@@ -292,24 +302,40 @@ final class App: NSObject, NSApplicationDelegate {
         rebuild()
     }
 
+    // The picture in the dialog shows the layout as it is typed; Arrange waits for at least one number.
     @objc func custom() {
         let alert = NSAlert()
-        alert.messageText = "Windows per row"
-        alert.informativeText = "One number per row, for example: 3 2"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        field.stringValue = UserDefaults.standard.string(forKey: "custom") ?? "3 2"
+        alert.messageText = "One number per row"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 228, height: 24))
+        field.placeholderString = "3 2"
+        field.stringValue = UserDefaults.standard.string(forKey: "custom") ?? ""
         alert.accessoryView = field
-        alert.addButton(withTitle: "Arrange")
+        let arrange = alert.addButton(withTitle: "Arrange")
         alert.addButton(withTitle: "Cancel")
+        func rows() -> [Int] { field.stringValue.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }.filter { $0 > 0 } }
+        let show = {
+            alert.icon = self.icon(rows(), w: 128, h: 80, radius: 14, big: true)
+            arrange.isEnabled = !rows().isEmpty
+        }
+        let watcher = FieldWatcher(show)
+        field.delegate = watcher
+        show()
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let rows = field.stringValue.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }.filter { $0 > 0 }
-        guard !rows.isEmpty else { return }
+        // The field holds its watcher only loosely; it must live as long as the dialog is open.
+        guard withExtendedLifetime(watcher, { alert.runModal() }) == .alertFirstButtonReturn, !rows().isEmpty else { return }
         UserDefaults.standard.set(field.stringValue, forKey: "custom")
+        let picked = rows()
         NSApp.hide(nil) // hand focus back so the front window stays first
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.run(rows) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.run(picked) }
     }
+}
+
+// Tells a dialog when the text in its field changes.
+final class FieldWatcher: NSObject, NSTextFieldDelegate {
+    let changed: () -> Void
+    init(_ changed: @escaping () -> Void) { self.changed = changed }
+    func controlTextDidChange(_ n: Notification) { changed() }
 }
 
 let app = NSApplication.shared
