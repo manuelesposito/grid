@@ -38,7 +38,7 @@ final class Focus {
         set { UserDefaults.standard.set(newValue, forKey: "focusZoom") }
     }
     // How dark the background gets on top of the blur: almost black, what lies behind stays just visible.
-    let shade = 0.9
+    let shade = 0.8
     var textStep = 0.0
     var cellsBefore: [String: Cells] = [:], keepRows = true
     // One duration and one curve for everything Focus moves or fades.
@@ -189,7 +189,7 @@ final class Focus {
         let view = BlurView()
         view.material = .fullScreenUI; view.blendingMode = .behindWindow; view.state = .active
         view.onClick = { [weak self] in self?.home() }
-        let dark = NSView(frame: view.bounds)
+        let dark = FirstClickView(frame: view.bounds)
         dark.autoresizingMask = [.width, .height]; dark.wantsLayer = true
         dark.layer?.backgroundColor = NSColor.black.withAlphaComponent(shade).cgColor
         view.addSubview(dark)
@@ -478,11 +478,16 @@ func toNS(_ r: CGRect) -> NSRect {
 
 
 // The first click counts, even though Grid is not the active app: otherwise macOS keeps that click
-// to wake Grid, and waking Grid lifts the dark above the window.
+// to wake Grid, and waking Grid lifts the dark above the window. The click lands on the dark layer,
+// which lies over the blur, and passes up to the blur view.
 final class BlurView: NSVisualEffectView {
     var onClick: (() -> Void)?
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick?() }
+}
+
+final class FirstClickView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 // A window macOS may place partly off screen (the shadow room of the picture reaches past the edges).
