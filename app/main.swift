@@ -20,7 +20,7 @@ final class App: NSObject, NSApplicationDelegate {
         item.button?.setAccessibilityLabel("Grid")
         rebuild()
         registerHotKeys()
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.closeGap(); self?.focus.sweep() }
+        focus.onCover = { [weak self] in self?.wake() }
         // When Grid quits or is restarted, a focused window goes back first.
         signal(SIGTERM, SIG_IGN)
         quitSignal.setEventHandler { [weak self] in _ = self?.focus.end(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { exit(0) } }
@@ -256,6 +256,19 @@ final class App: NSObject, NSApplicationDelegate {
         let result = rows == coding ? arrangeCoding(gap: gap) : arrange(rows, gap: gap)
         if result.placed == 0 { NSSound.beep() } else if undoFrames.isEmpty || !sameWindows(result.before) { undoFrames = result.before }
         arranged = Set(result.before.compactMap { w, _ in var id: CGWindowID = 0; return _AXUIElementGetWindow(w, &id) == .success ? id : nil })
+        if arranged.count > 1 { wake() }
+    }
+
+    // Grid looks once a second for a closed window or a leftover cover, and only while there is
+    // something to look for: with nothing arranged and no cover up, it sleeps.
+    var ticker: Timer?
+    func wake() {
+        guard ticker == nil else { return }
+        ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
+    }
+    func tick() {
+        closeGap(); focus.sweep()
+        if arranged.count <= 1 && focus.made.isEmpty && !focus.active { ticker?.invalidate(); ticker = nil }
     }
 
     // Once a second: an arranged window that is gone for good (not just hidden or on another desktop)

@@ -84,14 +84,21 @@ func visibleWindows(on screen: NSScreen) -> [Win] {
     return order.compactMap { byId[$0.0] }
 }
 
-// Tiles for rows of windows inside an area, the outer gap included.
+// Tiles for rows of windows inside an area, the outer gap included. Every edge lies on a whole point,
+// so neighbours meet exactly and no window sits on a half pixel.
 func tiles(_ rows: [Int], in r: CGRect, gap: CGFloat) -> [CGRect] {
-    let rowH = (r.height - gap * CGFloat(rows.count + 1)) / CGFloat(rows.count)
+    // The edges of n parts between two bounds, with gaps around and between them.
+    func edges(_ lo: CGFloat, _ hi: CGFloat, _ n: Int) -> [(CGFloat, CGFloat)] {
+        let part = (hi - lo - gap * CGFloat(n + 1)) / CGFloat(n)
+        return (0..<n).map { i in
+            let a = (lo + gap + CGFloat(i) * (part + gap)).rounded(), b = (lo + gap + CGFloat(i) * (part + gap) + part).rounded()
+            return (a, b)
+        }
+    }
     var out: [CGRect] = []
-    for (ri, count) in rows.enumerated() {
-        let colW = (r.width - gap * CGFloat(count + 1)) / CGFloat(count)
-        for c in 0..<count {
-            out.append(CGRect(x: r.minX + gap + CGFloat(c) * (colW + gap), y: r.minY + gap + CGFloat(ri) * (rowH + gap), width: colW, height: rowH))
+    for ((top, bottom), count) in zip(edges(r.minY, r.maxY, rows.count), rows) {
+        for (left, right) in edges(r.minX, r.maxX, count) {
+            out.append(CGRect(x: left, y: top, width: right - left, height: bottom - top))
         }
     }
     return out
@@ -101,8 +108,22 @@ typealias Result = (placed: Int, found: Int, before: [(AXUIElement, CGRect)])
 
 func move(_ pairs: [(Win, CGRect)], found: Int) -> Result {
     let moves = pairs.compactMap { w, tile in axFrame(w.ax).map { (w.ax, $0, tile) } }
-    glide(moves)
+    glide(moves) { for (w, _, tile) in moves { settle(w, in: tile) } }
     return (moves.count, found, moves.map { ($0.0, $0.1) })
+}
+
+// A window that would not take its tile's size (a minimum size, a fixed shape) sits in the tile's
+// top left corner at the size it took, and is kept on the screen.
+func settle(_ w: AXUIElement, in tile: CGRect) {
+    guard let f = axFrame(w), abs(f.width - tile.width) > 2 || abs(f.height - tile.height) > 2 else { return }
+    var frame = CGRect(origin: tile.origin, size: f.size)
+    if let screen = NSScreen.screens.first(where: { topLeft($0.frame).intersects(tile) }) {
+        let vf = topLeft(screen.visibleFrame)
+        frame.origin.x = max(vf.minX, min(frame.minX, vf.maxX - frame.width))
+        frame.origin.y = max(vf.minY, min(frame.minY, vf.maxY - frame.height))
+    }
+    var pos = frame.origin
+    AXUIElementSetAttributeValue(w, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &pos)!)
 }
 
 func trusted() -> Bool {

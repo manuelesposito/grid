@@ -39,6 +39,8 @@ final class Focus {
     // long after the window has gone home is cleared away.
     var made: [NSWindow] = []
     var ended = Date.distantPast
+    // Tells the app that a cover is up, so it starts to look for leftovers.
+    var onCover: (() -> Void)?
 
     // Setting from the menu: how many times bigger the terminal gets.
     var zoom: Double {
@@ -81,7 +83,8 @@ final class Focus {
     // places on the screen, takes the middle. Without a window in the middle, the front one does.
     func step(_ by: Int) {
         note.log("step \(by) armed=\(self.armed) active=\(self.active) blocked=\(Date() <= self.movingUntil)")
-        guard armed, Date() > movingUntil else { return }
+        guard armed else { NSSound.beep(); return }
+        guard Date() > movingUntil else { return }
         guard active, let screen else { _ = start(); return }
         let wins = visibleWindows(on: screen)
         func home(_ w: Win) -> CGRect { w.id == windowID ? before : (axFrame(w.ax) ?? .zero) }
@@ -231,7 +234,7 @@ final class Focus {
         view.addSubview(dark)
         b.contentView = view
         b.alphaValue = 0
-        made.append(b)
+        made.append(b); onCover?()
         return b
     }
 
@@ -460,7 +463,7 @@ final class Focus {
         o.isOpaque = false; o.backgroundColor = .clear; o.hasShadow = false; o.ignoresMouseEvents = true
         o.animationBehavior = .none; o.alphaValue = 0.99
         o.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
-        made.append(o)
+        made.append(o); onCover?()
         return o
     }
 
