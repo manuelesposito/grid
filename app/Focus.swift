@@ -45,6 +45,9 @@ final class Focus {
     // The row that goes around (Carousel.swift): the pictures peeking in at the edges, the look at the
     // mouse, and which peek it has brought out (-1, 1, or 0 for none).
     var peeks: [Int: Peek] = [:]
+    // The size a window was pulled to in the middle, so it takes it again the next time it comes there
+    // (Manuel, 2026-10-01). Kept while Grid runs; window numbers do not outlive their windows.
+    var sizes: [CGWindowID: CGSize] = [:]
     var mouseWatch: Timer?
     var out = 0
 
@@ -179,7 +182,8 @@ final class Focus {
             AXUIElementIsAttributeSettable(w, kAXSizeAttribute as CFString, &settable)
             if settable.boolValue { size = CGSize(width: min((frame.width * zoom).rounded(), vf.width), height: (frame.height * zoom).rounded()) }
         }
-        size.height = min(size.height, vf.height)
+        if textStep == 0, let s = sizes[id] { size = s }
+        size = CGSize(width: min(size.width, vf.width), height: min(size.height, vf.height))
         target = centred(size, on: CGPoint(x: vf.midX, y: vf.midY))
 
         // The blur covers every screen.
@@ -357,6 +361,7 @@ final class Focus {
             }
             let new = centred(size, on: CGPoint(x: target.midX, y: target.midY))
             target = new
+            if textStep == 0 { sizes[windowID] = size }
             slide(w, f, new)
         }
         evening = item

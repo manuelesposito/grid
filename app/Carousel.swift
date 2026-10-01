@@ -38,12 +38,14 @@ extension Focus {
 
     // Where a picture lies: 0 in the middle, 1 and -1 peeking at the right and left edge, 2 and -2 just past them.
     // Out = the mouse is near that peek.
-    func spot(_ s: Shot, _ side: Int, out: Bool = false) -> CGRect {
+    // In the middle a window has the size it was last pulled to there, if it was.
+    func spot(_ s: Shot, _ side: Int, out: Bool = false, id: CGWindowID = 0) -> CGRect {
         guard let screen else { return s.frame }
         let k = side == 0 ? 1 : out ? outScale : peekScale
         let show = out ? outEdge : edge
         let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16), sf = topLeft(screen.frame)
-        let w = (s.frame.width * k).rounded(), h = (min(s.frame.height, vf.height) * k).rounded()
+        let size = side == 0 ? middleSize(id, s.frame.size) : s.frame.size
+        let w = (min(size.width, vf.width) * k).rounded(), h = (min(size.height, vf.height) * k).rounded()
         let x: CGFloat
         switch side {
         case 0: x = (vf.midX - w / 2).rounded()
@@ -59,6 +61,8 @@ extension Focus {
         let r = CGFloat(s.image.width) / sc - s.box.maxX / sc, b = CGFloat(s.image.height) / sc - s.box.maxY / sc
         return CGRect(x: x - l, y: y - t, width: w + l + r, height: h + t + b)
     }
+
+    func middleSize(_ id: CGWindowID, _ home: CGSize) -> CGSize { sizes[id] ?? home }
 
     // A picture that can be clicked: a click on a peek slides the row towards it.
     func peekWindow(_ s: Shot, side: Int) -> NSWindow {
@@ -158,8 +162,9 @@ extension Focus {
             self.window = nil; self.blur = nil; self.others = []
             place(w, oldHome)
             // The next one waits in the middle, under the blur, for its picture to land on it.
-            let size = CGSize(width: nextHome.width, height: min(nextHome.height, topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16).height))
             let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16)
+            let m = self.middleSize(next.id, nextHome.size)
+            let size = CGSize(width: min(m.width, vf.width), height: min(m.height, vf.height))
             place(next.ax, self.centred(size, on: CGPoint(x: vf.midX, y: vf.midY)))
 
             var row: [Int: Peek] = [:]
@@ -173,7 +178,7 @@ extension Focus {
             row[-by] = Peek(pic: curPic, id: oldID, shot: cur)
             self.move(curPic, to: self.spot(cur, -by), alpha: self.peekAlpha)
             self.peeks = row
-            self.move(incoming.pic, to: self.spot(incoming.shot, 0), alpha: 1) {
+            self.move(incoming.pic, to: self.spot(incoming.shot, 0, id: next.id), alpha: 1) {
                 self.arrive(next, home: nextHome, covers: covers, picture: incoming.pic)
             }
             if let coming, let a = after, a.id != oldID, let s = await coming.value, self.peeks[by]?.id != a.id {

@@ -14,13 +14,18 @@ final class WindowPicture: NSView {
         layer?.masksToBounds = true
         layer?.backgroundColor = pixel(image, x: Int(6 * scale), y: barPx + Int(6 * scale))
 
-        // Text area: stretches with the picture.
+        // Text area: grows and shrinks with the picture's width, held at the top. A picture that lands on
+        // a window of another height (Focus remembers the size a window was pulled to in the middle)
+        // shows more or less of the window's own ground below, never stretched text.
+        let crop = image.cropping(to: CGRect(x: 0, y: barPx, width: image.width, height: image.height - barPx))
+        textAspect = CGFloat(image.height - barPx) / CGFloat(image.width)
         let body = NSView(frame: NSRect(x: 0, y: 0, width: size.width, height: size.height - titleBar))
         body.wantsLayer = true
-        body.layer?.contents = image.cropping(to: CGRect(x: 0, y: barPx, width: image.width, height: image.height - barPx))
+        body.layer?.contents = crop
         body.layer?.contentsGravity = .resize
-        body.autoresizingMask = [.width, .height]
         addSubview(body)
+        self.body = body
+        self.titleBar = titleBar
 
         // Title bar: its left part stays put at real size, the rest is its own colour.
         let keep = min(image.width, Int((size.width - radius - 8) * scale))
@@ -34,6 +39,16 @@ final class WindowPicture: NSView {
         left.layer?.contentsGravity = .resize
         bar.addSubview(left)
         addSubview(bar)
+    }
+
+    var body: NSView?
+    var textAspect: CGFloat = 1
+    var titleBar: CGFloat = 0
+    // Called whenever the picture changes size.
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        let h = bounds.width * textAspect
+        body?.frame = NSRect(x: 0, y: bounds.height - titleBar - h, width: bounds.width, height: h)
     }
 
     required init?(coder: NSCoder) { nil }
