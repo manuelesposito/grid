@@ -28,6 +28,9 @@ final class Focus {
     var handing = false
     // The window as ScreenCaptureKit knows it; looking it up again for every picture takes a moment.
     var known: SCWindow?
+    var screen: NSScreen?
+    // Waits for the mouse to let go of an edge before the window is evened out.
+    var evening: DispatchWorkItem?
 
     // Setting from the menu: how many times bigger the terminal gets.
     var zoom: Double {
@@ -67,7 +70,7 @@ final class Focus {
     func start(reusing covers: [NSWindow] = []) -> Bool {
         guard trusted(), let (front, w, id) = frontWindow(), let frame = axFrame(w),
               let screen = NSScreen.screens.max(by: { topLeft($0.frame).intersection(frame).area < topLeft($1.frame).intersection(frame).area }) else { return false }
-        window = w; windowID = id; app = front; before = frame
+        window = w; windowID = id; app = front; before = frame; self.screen = screen
         cellsBefore = [:]
 
         let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16)
@@ -117,7 +120,7 @@ final class Focus {
             let other = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             if let self, other?.processIdentifier != self.app?.processIdentifier, other?.processIdentifier != ProcessInfo.processInfo.processIdentifier { self.handOver() }
         }
-        watch(front.processIdentifier)
+        watch(front.processIdentifier, w)
 
         if textStep == 0 {
             // Nothing re-wraps: the real window can glide.
@@ -189,17 +192,43 @@ final class Focus {
     }
 
     // Calls back when another window of the focused app comes to the front.
-    func watch(_ pid: pid_t) {
+    func watch(_ pid: pid_t, _ w: AXUIElement) {
         var o: AXObserver?
-        AXObserverCreate(pid, { _, _, _, me in
+        AXObserverCreate(pid, { _, _, name, me in
             let focus = Unmanaged<Focus>.fromOpaque(me!).takeUnretainedValue()
+            if name as String == kAXResizedNotification { DispatchQueue.main.async { focus.resized() }; return }
             // Sheets and dialogs are no new place for focus; a real window is.
             DispatchQueue.main.async { if let next = focus.frontWindow(), next.id != focus.windowID { focus.handOver() } }
         }, &o)
         guard let o else { return }
         AXObserverAddNotification(o, AXUIElementCreateApplication(pid), kAXFocusedWindowChangedNotification as CFString, Unmanaged.passUnretained(self).toOpaque())
+        AXObserverAddNotification(o, w, kAXResizedNotification as CFString, Unmanaged.passUnretained(self).toOpaque())
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(o), .commonModes)
         watcher = o
+    }
+
+    // A pull on one edge grows or shrinks the window on all sides: it keeps its proportions and stays
+    // in the middle. Applied the moment the mouse lets go; while it drags, macOS sets the frame itself.
+    func resized() {
+        guard active, !zooming, gliding?.isValid != true else { return }
+        evening?.cancel()
+        let item = DispatchWorkItem { [self] in
+            if NSEvent.pressedMouseButtons != 0 { resized(); return }
+            guard let w = window, let f = axFrame(w),
+                  abs(f.width - target.width) > 2 || abs(f.height - target.height) > 2 else { return }
+            let byWidth = abs(f.width - target.width) >= abs(f.height - target.height)
+            var factor = byWidth ? f.width / target.width : f.height / target.height
+            if let screen {
+                let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16)
+                factor = min(factor, vf.width / target.width, vf.height / target.height)
+            }
+            let size = CGSize(width: (target.width * factor).rounded(), height: (target.height * factor).rounded())
+            let new = centred(size, on: CGPoint(x: target.midX, y: target.midY))
+            target = new
+            slide(w, f, new)
+        }
+        evening = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: item)
     }
 
     // Keeping = the covers stay for the next window. Staying = the app in front stays in front,
