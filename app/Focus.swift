@@ -38,7 +38,7 @@ final class Focus {
         set { UserDefaults.standard.set(newValue, forKey: "focusZoom") }
     }
     // How dark the background gets on top of the blur: almost black, what lies behind stays just visible.
-    let shade = 0.8
+    let shade = 0.7
     var textStep = 0.0
     var cellsBefore: [String: Cells] = [:], keepRows = true
     // One duration and one curve for everything Focus moves or fades.
