@@ -477,8 +477,11 @@ func toNS(_ r: CGRect) -> NSRect {
 }
 
 
+// The first click counts, even though Grid is not the active app: otherwise macOS keeps that click
+// to wake Grid, and waking Grid lifts the dark above the window.
 final class BlurView: NSVisualEffectView {
     var onClick: (() -> Void)?
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick?() }
 }
 
