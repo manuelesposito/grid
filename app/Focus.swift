@@ -101,7 +101,7 @@ final class Focus {
     func home() {
         note.log("home active=\(self.active) zooming=\(self.zooming) blocked=\(Date() <= self.movingUntil)")
         guard active, !zooming, Date() > movingUntil else { return }
-        movingUntil = Date().addingTimeInterval(0.4)
+        movingUntil = Date().addingTimeInterval(0.3)
         _ = end()
     }
 
@@ -112,7 +112,7 @@ final class Focus {
         let h = NSScreen.screens.first?.frame.height ?? 0
         guard f.contains(CGPoint(x: mouse.x, y: h - mouse.y)) else { return }
         note.log("clicked window \(front.id)")
-        movingUntil = Date().addingTimeInterval(0.8)
+        movingUntil = Date().addingTimeInterval(0.3)
         _ = start()
     }
 
@@ -254,11 +254,17 @@ final class Focus {
             return
         }
         guard let next = frontWindow(), next.id != windowID, let b = blur else {
-            if frontWindow()?.id != windowID { _ = end(keeping: false, staying: true) }
+            // Nothing real in front for the moment: a click on the Dock, a dialog, an app still waking up.
+            // A moment later it is either our window again, another one, or truly nothing: then Focus ends.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                guard self.active, !self.handing else { return }
+                if let n = self.frontWindow() { if n.id != self.windowID { self.handOver() } }
+                else { _ = self.end(keeping: false, staying: true) }
+            }
             return
         }
         handing = true
-        movingUntil = Date().addingTimeInterval(0.8)
+        movingUntil = Date().addingTimeInterval(0.5)
         let covers = [b] + others
         let old = windowID, grown = textStep != 0
         // Both windows lie above the blur: the old one is seen sliding home while the next comes to the middle.
