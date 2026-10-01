@@ -9,9 +9,6 @@
 import AppKit
 import ScreenCaptureKit
 
-// Until then Grid is animating; checks that would stall the main thread hold off.
-var quietUntil = Date.distantPast
-
 final class Focus {
     var window: AXUIElement?
     var windowID: CGWindowID = 0
@@ -51,7 +48,6 @@ final class Focus {
     func toggle() -> Bool {
         guard Date() > movingUntil else { return true }
         movingUntil = Date().addingTimeInterval(0.8)
-        quietUntil = Date().addingTimeInterval(1.5)
         return active ? end() : start()
     }
 
@@ -155,6 +151,7 @@ final class Focus {
     func cover(_ screen: NSScreen) -> NSWindow {
         let b = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         b.isOpaque = false; b.backgroundColor = .clear; b.hasShadow = false; b.animationBehavior = .none
+        b.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
         let view = BlurView()
         view.material = .fullScreenUI; view.blendingMode = .behindWindow; view.state = .active
         view.onClick = { [weak self] in _ = self?.toggle() }
@@ -181,7 +178,6 @@ final class Focus {
         }
         handing = true
         movingUntil = Date().addingTimeInterval(0.8)
-        quietUntil = Date().addingTimeInterval(1.5)
         let covers = [b] + others
         for c in covers { c.order(.below, relativeTo: Int(next.id)) }
         _ = end(keeping: true) {
@@ -339,6 +335,7 @@ final class Focus {
         let o = FreeWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
         o.isOpaque = false; o.backgroundColor = .clear; o.hasShadow = false; o.ignoresMouseEvents = true
         o.animationBehavior = .none; o.alphaValue = 0.99
+        o.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
         return o
     }
 
