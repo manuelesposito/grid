@@ -48,10 +48,34 @@ final class Focus {
 
     // Presses while the window is still moving are ignored, so its old place stays exact.
     var movingUntil = Date.distantPast
+    // Focus is a mode. On, it waits: the window that is clicked next takes the middle. A click on the
+    // desktop sends it home and the mode stays on, so the next click can pick another window.
+    var armed = false
+    var clicks: Any?
     func toggle() -> Bool {
         guard Date() > movingUntil else { return true }
+        if armed {
+            armed = false
+            if let clicks { NSEvent.removeMonitor(clicks) }; clicks = nil
+            movingUntil = Date().addingTimeInterval(0.8)
+            return active ? end() : true
+        }
+        armed = true
+        clicks = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            // A moment later the clicked window is the front one.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { self?.clicked(NSEvent.mouseLocation) }
+        }
+        return true
+    }
+
+    // The click landed in the front window: that one goes to the middle. Clicks elsewhere (menu bar, desktop,
+    // Dock) do nothing. Once a window is in the middle, the hand-over takes care of the next clicks.
+    func clicked(_ mouse: NSPoint) {
+        guard armed, !active, Date() > movingUntil, let front = frontWindow(), let f = axFrame(front.window) else { return }
+        let h = NSScreen.screens.first?.frame.height ?? 0
+        guard f.contains(CGPoint(x: mouse.x, y: h - mouse.y)) else { return }
         movingUntil = Date().addingTimeInterval(0.8)
-        return active ? end() : start()
+        _ = start()
     }
 
     // The front window of the front app, when it is a real document window.

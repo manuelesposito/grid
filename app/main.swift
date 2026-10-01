@@ -34,7 +34,7 @@ final class App: NSObject, NSApplicationDelegate {
         auto.keyEquivalentModifierMask = [.control, .option]; auto.target = self
         menu.addItem(auto)
         let f = NSMenuItem(title: "Focus", action: #selector(toggleFocus), keyEquivalent: "f")
-        f.keyEquivalentModifierMask = [.control, .option]; f.target = self; f.state = focus.active ? .on : .off
+        f.keyEquivalentModifierMask = [.control, .option]; f.target = self; f.state = focus.armed ? .on : .off
         menu.addItem(f)
         // Everything that is set once and left alone sits together.
         let settings = NSMenu()
