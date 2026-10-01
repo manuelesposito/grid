@@ -60,8 +60,9 @@ final class Focus {
         get { UserDefaults.standard.object(forKey: "focusZoom") as? Double ?? 2 }
         set { UserDefaults.standard.set(newValue, forKey: "focusZoom") }
     }
-    // How dark the background gets on top of the blur: almost black, what lies behind stays just visible.
-    let shade = 0.55
+    // No dark at all since 2026-10-01 (Manuel: "they wouldn't make it dark, not dark at all … a strong blur"):
+    // only the frosted glass, which follows Light and Dark mode. The layer stays for the click on it.
+    let shade = 0.0
     var textStep = 0.0
     var cellsBefore: [String: Cells] = [:], keepRows = true
     // One duration and one curve for everything Focus moves or fades.
