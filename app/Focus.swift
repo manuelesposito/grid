@@ -1,7 +1,7 @@
 // Focus: the front window moves to the middle and everything behind it blurs.
 // A Ghostty window grows with its text by the same factor, so every line keeps its length;
-// when it would be too tall, only the height gives way. The same key ends it. Focus is a mode: clicks go
-// through the blur, and the window that comes to the front takes the middle; a click on the desktop ends it.
+// when it would be too tall, only the height gives way. Focus is a mode: on, the window that is clicked takes
+// the middle; a click on the blur sends it home and shows all windows again; the key turns the mode off.
 //
 // A terminal slides to the middle at its size, then grows there in one soft fade: Grid covers it with its picture,
 // changes size and text once, unseen, and fades to a picture of the result, which is exactly the real window.
@@ -66,6 +66,13 @@ final class Focus {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { self?.clicked(NSEvent.mouseLocation) }
         }
         return true
+    }
+
+    // The window goes home and the covers clear; the mode stays on for the next click.
+    func home() {
+        guard active, !zooming, Date() > movingUntil else { return }
+        movingUntil = Date().addingTimeInterval(0.4)
+        _ = end()
     }
 
     // The click landed in the front window: that one goes to the middle. Clicks elsewhere (menu bar, desktop,
@@ -174,14 +181,14 @@ final class Focus {
         return true
     }
 
-    // Blur and a dark layer over one whole screen. Clicks go through to the windows beneath.
+    // Blur and a dark layer over one whole screen; a click on it sends the window home.
     func cover(_ screen: NSScreen) -> NSWindow {
         let b = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         b.isOpaque = false; b.backgroundColor = .clear; b.hasShadow = false; b.animationBehavior = .none
-        b.ignoresMouseEvents = true
         b.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
-        let view = NSVisualEffectView()
+        let view = BlurView()
         view.material = .fullScreenUI; view.blendingMode = .behindWindow; view.state = .active
+        view.onClick = { [weak self] in self?.home() }
         let dark = NSView(frame: view.bounds)
         dark.autoresizingMask = [.width, .height]; dark.wantsLayer = true
         dark.layer?.backgroundColor = NSColor.black.withAlphaComponent(shade).cgColor
@@ -234,7 +241,7 @@ final class Focus {
     // A pull on one edge grows or shrinks the window on all sides: it keeps its proportions and stays
     // in the middle. Applied the moment the mouse lets go; while it drags, macOS sets the frame itself.
     func resized() {
-        guard active, !zooming, gliding?.isValid != true else { return }
+        guard active, !zooming, !gliding else { return }
         evening?.cancel()
         let item = DispatchWorkItem { [self] in
             if NSEvent.pressedMouseButtons != 0 { resized(); return }
@@ -469,6 +476,11 @@ func toNS(_ r: CGRect) -> NSRect {
     return NSRect(x: r.minX, y: h - r.maxY, width: r.width, height: r.height)
 }
 
+
+final class BlurView: NSVisualEffectView {
+    var onClick: (() -> Void)?
+    override func mouseDown(with event: NSEvent) { onClick?() }
+}
 
 // A window macOS may place partly off screen (the shadow room of the picture reaches past the edges).
 final class FreeWindow: NSWindow {

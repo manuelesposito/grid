@@ -166,12 +166,18 @@ func place(_ w: AXUIElement, _ frame: CGRect) {
 
 // Moves windows to their new frames: fast start, soft landing, then calls done.
 let glideTime = 0.18
-// One glide at a time: a new one stops the one before, so two never push the same windows.
-var gliding: Timer?
+// A window is in one glide at a time: a new glide stops an older one that moves the same window.
+// Different windows glide side by side, one going home while the next comes in.
+var glides: [(timer: Timer, windows: [AXUIElement])] = []
+var gliding: Bool { glides.contains { $0.timer.isValid } }
 func glide(_ moves: [(AXUIElement, from: CGRect, to: CGRect)], duration: Double = glideTime, power: Double = 5, done: (() -> Void)? = nil) {
-    gliding?.invalidate()
+    glides.removeAll { g in
+        let same = g.windows.contains { a in moves.contains { CFEqual($0.0, a) } }
+        if same { g.timer.invalidate() }
+        return same || !g.timer.isValid
+    }
     let start = Date()
-    gliding = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { timer in
+    let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { timer in
         let t = min(1, Date().timeIntervalSince(start) / duration)
         let e = 1 - pow(1 - t, power)
         for (w, a, b) in moves {
@@ -183,4 +189,5 @@ func glide(_ moves: [(AXUIElement, from: CGRect, to: CGRect)], duration: Double 
         }
         if t >= 1 { timer.invalidate(); done?() }
     }
+    glides.append((timer, moves.map { $0.0 }))
 }
