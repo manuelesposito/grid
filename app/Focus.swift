@@ -38,7 +38,7 @@ final class Focus {
         set { UserDefaults.standard.set(newValue, forKey: "focusZoom") }
     }
     // How dark the background gets on top of the blur: almost black, what lies behind stays just visible.
-    let shade = 0.7
+    let shade = 0.55
     var textStep = 0.0
     var cellsBefore: [String: Cells] = [:], keepRows = true
     // One duration and one curve for everything Focus moves or fades.
@@ -66,6 +66,25 @@ final class Focus {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { self?.clicked(NSEvent.mouseLocation) }
         }
         return true
+    }
+
+    // Control-Option-Left and -Right: the window before or after this one, in reading order of their
+    // places on the screen, takes the middle. Without a window in the middle, the front one does.
+    func step(_ by: Int) {
+        guard armed, Date() > movingUntil else { return }
+        guard active, let screen else { _ = start(); return }
+        let wins = visibleWindows(on: screen)
+        func home(_ w: Win) -> CGRect { w.id == windowID ? before : (axFrame(w.ax) ?? .zero) }
+        let sorted = wins.sorted { a, b in
+            let fa = home(a), fb = home(b)
+            return abs(fa.minY - fb.minY) > 40 ? fa.minY < fb.minY : fa.minX < fb.minX
+        }
+        guard sorted.count > 1, let i = sorted.firstIndex(where: { $0.id == windowID }) else { return }
+        let n = sorted[(i + by + sorted.count) % sorted.count]
+        var pid: pid_t = 0
+        AXUIElementGetPid(n.ax, &pid)
+        AXUIElementPerformAction(n.ax, kAXRaiseAction as CFString)
+        NSRunningApplication(processIdentifier: pid)?.activate()
     }
 
     // The window goes home and the covers clear; the mode stays on for the next click.
@@ -238,22 +257,22 @@ final class Focus {
         watcher = o
     }
 
-    // A pull on one edge grows or shrinks the window on all sides: it keeps its proportions and stays
-    // in the middle. Applied the moment the mouse lets go; while it drags, macOS sets the frame itself.
+    // A pull on a side edge changes the width on both sides, a pull on the top or bottom the height both
+    // ways: the window stays in the middle. Applied the moment the mouse lets go; while it drags, macOS
+    // sets the frame itself.
     func resized() {
         guard active, !zooming, !gliding else { return }
         evening?.cancel()
         let item = DispatchWorkItem { [self] in
             if NSEvent.pressedMouseButtons != 0 { resized(); return }
-            guard let w = window, let f = axFrame(w),
-                  abs(f.width - target.width) > 2 || abs(f.height - target.height) > 2 else { return }
-            let byWidth = abs(f.width - target.width) >= abs(f.height - target.height)
-            var factor = byWidth ? f.width / target.width : f.height / target.height
+            guard let w = window, let f = axFrame(w) else { return }
+            let dw = abs(f.width - target.width) > 2, dh = abs(f.height - target.height) > 2
+            guard dw || dh else { return }
+            var size = CGSize(width: dw ? f.width : target.width, height: dh ? f.height : target.height)
             if let screen {
                 let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16)
-                factor = min(factor, vf.width / target.width, vf.height / target.height)
+                size = CGSize(width: min(size.width, vf.width), height: min(size.height, vf.height))
             }
-            let size = CGSize(width: (target.width * factor).rounded(), height: (target.height * factor).rounded())
             let new = centred(size, on: CGPoint(x: target.midX, y: target.midY))
             target = new
             slide(w, f, new)

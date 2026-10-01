@@ -165,6 +165,8 @@ final class App: NSObject, NSApplicationDelegate {
             switch id.id {
             case 98: d.undo()
             case 95: d.toggleFocus()
+            case 93: d.focus.step(-1)
+            case 94: d.focus.step(1)
             case 97: d.run(d.coding)
             case 99: d.run([])
             default: d.run(d.layouts[Int(id.id)])
@@ -177,7 +179,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         // Control-Option-0 = automatic, Control-Option-Z = undo.
         // Control-Option-C = coding.
-        for (key, id) in [(kVK_ANSI_0, 99), (kVK_ANSI_Z, 98), (kVK_ANSI_C, 97), (kVK_ANSI_F, 95)] {
+        for (key, id) in [(kVK_ANSI_0, 99), (kVK_ANSI_Z, 98), (kVK_ANSI_C, 97), (kVK_ANSI_F, 95), (kVK_LeftArrow, 93), (kVK_RightArrow, 94)] {
             var ref: EventHotKeyRef?
             RegisterEventHotKey(UInt32(key), UInt32(controlKey | optionKey), EventHotKeyID(signature: OSType(0x47524944), id: UInt32(id)), GetApplicationEventTarget(), 0, &ref)
         }
