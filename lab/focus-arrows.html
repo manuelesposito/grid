@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Focus Arrows</title>
+<style>
+	:root {
+		--ease: cubic-bezier(0.2, 0.9, 0.25, 1);
+		--time: 340ms;
+		--edge: 56px;
+	}
+	* { box-sizing: border-box; }
+	html, body { margin: 0; height: 100%; overflow: hidden; background: #1b2330; font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; }
+
+	/* The desktop: a wallpaper and the windows at home. */
+	#desk { position: fixed; inset: 0; background: radial-gradient(120% 90% at 20% 10%, #4a6fa5, #22314d 55%, #151c2a); }
+	#shade { position: fixed; inset: 0; z-index: 10; backdrop-filter: blur(28px) saturate(1.2); -webkit-backdrop-filter: blur(28px) saturate(1.2); background: rgba(0, 0, 0, 0.9); }
+
+	.card { position: absolute; left: 0; top: 0; border-radius: 12px; overflow: hidden; transform-origin: 0 0;
+		box-shadow: 0 22px 60px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+		transition: transform var(--time) var(--ease), opacity var(--time) var(--ease); z-index: 5; }
+	.card.up { z-index: 20; }
+	.card.still { transition: none; }
+	.card.peek { cursor: pointer; }
+	.bar { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 12px; }
+	.dots { display: flex; gap: 7px; }
+	.dots i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+	.dots i:nth-child(1) { background: #ff5f57; } .dots i:nth-child(2) { background: #febc2e; } .dots i:nth-child(3) { background: #28c840; }
+	.bar span { flex: 1; text-align: center; margin-right: 50px; opacity: 0.7; }
+	.term { background: #16181d; color: #d6d9df; }
+	.term .body { padding: 10px 16px; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; }
+	.web { background: #fff; color: #222; }
+	.web .bar { background: #ececec; }
+	.web .body { padding: 28px 40px; }
+	.web h1 { font: 600 26px/1.2 -apple-system, sans-serif; margin: 0 0 12px; }
+	.web p { margin: 0 0 10px; color: #555; }
+	.web .img { height: 120px; border-radius: 8px; margin: 14px 0; }
+
+	/* The arrows. */
+	.arrow { position: fixed; top: 50%; z-index: 30; transform: translateY(-50%); border: 0; padding: 0; background: none; cursor: pointer;
+		opacity: 0; transition: opacity 300ms ease; display: grid; place-items: center; }
+	body.awake .arrow { opacity: 1; }
+	#prev { left: 18px; } #next { right: 18px; }
+	.arrow svg { display: block; }
+	/* A: the line alone, as in Quick Look. */
+	.a-line .arrow { width: 44px; height: 88px; color: rgba(255, 255, 255, 0.55); }
+	.a-line .arrow:hover { color: rgba(255, 255, 255, 0.95); }
+	.a-line .round { display: none; } .a-round .line { display: none; }
+	/* B: a solid round shape with the arrow cut out. */
+	.a-round .arrow { width: 44px; height: 44px; color: rgba(255, 255, 255, 0.28); }
+	.a-round .arrow:hover { color: rgba(255, 255, 255, 0.9); }
+
+	/* The controls for this sheet. */
+	#controls { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 40; display: flex; gap: 14px; align-items: center;
+		padding: 8px 12px; border-radius: 14px; background: rgba(40, 40, 46, 0.86); color: #ddd; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+		box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.12); max-width: calc(100vw - 32px); flex-wrap: wrap; justify-content: center; }
+	.group { display: flex; align-items: center; gap: 6px; }
+	.group b { font-weight: 500; opacity: 0.6; margin-right: 2px; }
+	.seg { display: flex; background: rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 2px; }
+	.seg button { border: 0; background: none; color: inherit; font: inherit; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+	.seg button[aria-pressed="true"] { background: rgba(255, 255, 255, 0.2); color: #fff; }
+	.seg button:disabled { opacity: 0.35; cursor: default; }
+	#hint { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 40; color: rgba(255, 255, 255, 0.45); font-size: 12px; }
+</style>
+</head>
+<body class="a-line">
+<div id="desk"></div>
+<div id="shade"></div>
+<div id="stage"></div>
+
+<button class="arrow" id="prev" aria-label="Previous window">
+	<svg class="line" width="18" height="44" viewBox="0 0 18 44"><path d="M15 2 L3 22 L15 42" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+	<svg class="round" width="44" height="44" viewBox="0 0 44 44"><mask id="mp"><rect width="44" height="44" fill="#fff"/><path d="M25 14 L17 22 L25 30" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></mask><circle cx="22" cy="22" r="22" fill="currentColor" mask="url(#mp)"/></svg>
+</button>
+<button class="arrow" id="next" aria-label="Next window">
+	<svg class="line" width="18" height="44" viewBox="0 0 18 44"><path d="M3 2 L15 22 L3 42" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+	<svg class="round" width="44" height="44" viewBox="0 0 44 44"><mask id="mn"><rect width="44" height="44" fill="#fff"/><path d="M19 14 L27 22 L19 30" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></mask><circle cx="22" cy="22" r="22" fill="currentColor" mask="url(#mn)"/></svg>
+</button>
+
+<div id="hint">Move the mouse to see the arrows. The arrow keys work here too.</div>
+
+<div id="controls">
+	<div class="group"><b>Arrows</b><div class="seg" data-name="arrows"><button data-v="line" aria-pressed="true">A Line</button><button data-v="round">B Round</button></div></div>
+	<div class="group"><b>Way</b><div class="seg" data-name="way"><button data-v="home" aria-pressed="true">From its place</button><button data-v="side">Sideways</button></div></div>
+	<div class="group"><b>Neighbours</b><div class="seg" data-name="peek"><button data-v="off" aria-pressed="true">Hidden</button><button data-v="on">Peek in</button></div></div>
+</div>
+
+<script>
+const wins = [
+	{ kind: 'term', title: '~/Developer/architrave', lines: ['$ git status', 'On branch main', 'Changes not staged for commit:', '  modified:   style.css', '  modified:   assets/js/focus-mode.js', '', '$ npm run lint', '✓ 214 files checked'] },
+	{ kind: 'web', title: 'elmastudio.de', h: 'Reading on the web, slowly', p: ['A quiet sheet for the article, a rail for the rest.', 'Every reader can choose the size of the text.'], c: '#e8d9c4' },
+	{ kind: 'term', title: '~/Developer/window-grid', lines: ['$ ./build.sh', 'Grid.app: replacing existing signature', '', '$ log show --predicate \'subsystem == "grid"\'', 'start 4182 Ghostty reusing=0', 'click on the dark active=true', 'home active=true zooming=false'] },
+	{ kind: 'web', title: 'github.com/manuelesposito/grid', h: 'Grid', p: ['A small menu bar tool that arranges your windows.', 'Release v1.1 · notarized'], c: '#cfe0f5' },
+	{ kind: 'term', title: '~', lines: ['$ claude', '', '  Focus: the way home is softer now.', '', '> _'] },
+];
+const stage = document.getElementById('stage'), desk = document.getElementById('desk');
+let cur = 0, opts = { arrows: 'line', way: 'home', peek: 'off' };
+
+function cardHTML(w) {
+	const bar = `<div class="bar"><div class="dots"><i></i><i></i><i></i></div><span>${w.title}</span></div>`;
+	if (w.kind === 'term') return bar + `<div class="body">${w.lines.join('\n')}</div>`;
+	return bar + `<div class="body"><h1>${w.h}</h1><p>${w.p[0]}</p><div class="img" style="background:${w.c}"></div><p>${w.p[1]}</p></div>`;
+}
+const cards = wins.map((w, i) => {
+	const el = document.createElement('div');
+	el.className = 'card ' + w.kind; el.innerHTML = cardHTML(w);
+	el.addEventListener('click', () => { if (el.classList.contains('peek')) step(el.dataset.d < 0 ? -1 : 1); });
+	stage.appendChild(el); return el;
+});
+
+function size() {
+	const W = innerWidth, H = innerHeight;
+	const cw = Math.min(820, W * 0.56), ch = Math.min(H * 0.66, cw * 0.66);
+	return { W, H, cw, ch };
+}
+// Home places: three across the top, two below, like a Grid layout.
+function home(i, s) {
+	const g = 10, cols = i < 3 ? 3 : 2, row = i < 3 ? 0 : 1, col = i < 3 ? i : i - 3;
+	const tw = (s.W - g * (cols + 1)) / cols, th = (s.H - 40 - g * 3) / 2;
+	const k = Math.min(tw / s.cw, th / s.ch);
+	return { x: g + col * (tw + g) + (tw - s.cw * k) / 2, y: 30 + g + row * (th + g) + (th - s.ch * k) / 2, k };
+}
+function centre(s) { return { x: (s.W - s.cw) / 2, y: (s.H - s.ch) / 2 - 14, k: 1 }; }
+function dist(i) { let d = (i - cur) % wins.length; if (d > 2) d -= wins.length; if (d < -2) d += wins.length; return d; }
+
+let lastD = wins.map(() => 0);
+function layout(first) {
+	const s = size();
+	cards.forEach((el, i) => {
+		el.style.width = s.cw + 'px'; el.style.height = s.ch + 'px';
+		let p, o = 1, up = false;
+		el.classList.remove('peek');
+		if (opts.way === 'home') {
+			p = i === cur ? centre(s) : home(i, s); up = i === cur;
+		} else {
+			const d = dist(i), c = centre(s);
+			// A neighbour shows a sliver at the edge, or waits just past it.
+			const off = opts.peek === 'on' ? (s.W / 2 + s.cw / 2 - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--edge'))) : (s.W / 2 + s.cw / 2 + 40);
+			const k = d === 0 ? 1 : 0.92;
+			p = { x: c.x + d * off + (s.cw * (1 - k)) / 2, y: c.y + (s.ch * (1 - k)) / 2, k };
+			up = Math.abs(d) <= 1;
+			o = d === 0 ? 1 : (Math.abs(d) === 1 && opts.peek === 'on' ? 0.5 : 0);
+			if (Math.abs(d) === 1 && opts.peek === 'on') el.classList.add('peek');
+			el.dataset.d = d;
+			// Going around: a window that crosses from one far side to the other does so unseen.
+			el.classList.toggle('still', !!first || Math.abs(d - lastD[i]) > 1);
+			lastD[i] = d;
+		}
+		if (opts.way === 'home') el.classList.toggle('still', !!first);
+		el.style.transform = `translate(${p.x}px, ${p.y}px) scale(${p.k})`;
+		el.style.opacity = o;
+		// The window coming out stays above the dark until it has landed at home.
+		if (up) el.classList.add('up');
+		else if (el.classList.contains('up')) setTimeout(() => { if (!(opts.way === 'home' ? i === cur : Math.abs(dist(i)) <= 1)) el.classList.remove('up'); }, 340);
+	});
+	if (first) requestAnimationFrame(() => cards.forEach(c => c.classList.remove('still')));
+}
+function step(by) { cur = (cur + by + wins.length) % wins.length; layout(); wake(); }
+
+// The arrows show when the mouse moves and fade when it rests, as in Photos.
+let rest;
+function wake() { document.body.classList.add('awake'); clearTimeout(rest); rest = setTimeout(() => { if (!document.querySelector('.arrow:hover')) document.body.classList.remove('awake'); }, 1600); }
+addEventListener('mousemove', wake);
+document.getElementById('prev').onclick = () => step(-1);
+document.getElementById('next').onclick = () => step(1);
+addEventListener('keydown', e => { if (e.key === 'ArrowLeft') step(-1); if (e.key === 'ArrowRight') step(1); });
+addEventListener('resize', () => layout(true));
+
+document.querySelectorAll('.seg').forEach(seg => seg.addEventListener('click', e => {
+	const b = e.target.closest('button'); if (!b || b.disabled) return;
+	seg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+	opts[seg.dataset.name] = b.dataset.v;
+	document.body.className = 'a-' + opts.arrows + (document.body.classList.contains('awake') ? ' awake' : '');
+	const peekSeg = document.querySelector('[data-name="peek"]');
+	peekSeg.querySelectorAll('button').forEach(x => x.disabled = opts.way === 'home');
+	if (opts.way === 'home') { opts.peek = 'off'; peekSeg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x.dataset.v === 'off')); }
+	layout();
+}));
+document.querySelectorAll('[data-name="peek"] button').forEach(x => x.disabled = true);
+layout(true);
+</script>
+</body>
+</html>

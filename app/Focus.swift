@@ -42,6 +42,12 @@ final class Focus {
     var ended = Date.distantPast
     // Tells the app that a cover is up, so it starts to look for leftovers.
     var onCover: (() -> Void)?
+    // The row that goes around (Carousel.swift): the pictures peeking in at the edges, the arrows,
+    // and the mouse that wakes them.
+    var peeks: [Int: Peek] = [:]
+    var arrows: [NSWindow] = []
+    var mouseWatch: Timer?
+    var lastMouse = NSPoint.zero, restSince = Date(), arrowsShown = false
 
     // Setting from the menu: how many times bigger the terminal gets.
     var zoom: Double {
@@ -90,6 +96,7 @@ final class Focus {
         guard armed else { NSSound.beep(); return }
         guard Date() > movingUntil else { return }
         guard active, let screen else { _ = start(); return }
+        if slideStep(by) { return }
         let wins = visibleWindows(on: screen)
         func home(_ w: Win) -> CGRect { w.id == windowID ? before : (axFrame(w.ax) ?? .zero) }
         let sorted = wins.sorted { a, b in
@@ -136,8 +143,10 @@ final class Focus {
     }
 
     // Covers handed in are still on screen from the window focus comes from.
-    func start(reusing covers: [NSWindow] = []) -> Bool {
-        guard trusted(), let (front, w, id) = frontWindow(), let frame = axFrame(w),
+    // Home handed in: the window is already in the middle, put there by a slide of the row (Carousel.swift),
+    // and this is where it goes back to.
+    func start(reusing covers: [NSWindow] = [], home: CGRect? = nil) -> Bool {
+        guard trusted(), let (front, w, id) = frontWindow(), let frame = home ?? axFrame(w),
               let screen = NSScreen.screens.max(by: { topLeft($0.frame).intersection(frame).area < topLeft($1.frame).intersection(frame).area }) else { return false }
         window = w; windowID = id; app = front; before = frame; self.screen = screen
         note.log("start \(id) \(front.localizedName ?? "") reusing=\(covers.count)")
@@ -201,7 +210,13 @@ final class Focus {
         if textStep == 0 {
             // Nothing re-wraps: the real window can glide.
             for c in [b] + others { c.order(.below, relativeTo: Int(id)); fade(c, to: 1) }
+            if home != nil {
+                place(w, target)
+                showPeeks()
+                return true
+            }
             slide(w, frame, target) {
+                self.showPeeks()
                 // A window that did not take the whole size still sits in the middle.
                 guard self.window != nil, self.windowID == id, let f = axFrame(w),
                       abs(f.width - self.target.width) > 2 || abs(f.height - self.target.height) > 2 else { return }
@@ -296,6 +311,7 @@ final class Focus {
             self.handing = false
             if !self.start(reusing: covers) {
                 for c in covers { self.fade(c, to: 0) { c.orderOut(nil) } }
+                self.hideArrows()
             } else if !grown {
                 // Home again, the old window goes back under the blur.
                 DispatchQueue.main.asyncAfter(deadline: .now() + self.time + 0.05) {
@@ -358,12 +374,9 @@ final class Focus {
         }
         note.log("end keeping=\(keeping) staying=\(staying) active=\(self.active) step=\(self.textStep)")
         guard let w = window, let b = blur else { return false }
-        if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
-        observer = nil
-        if let screens { NotificationCenter.default.removeObserver(screens) }
-        screens = nil
-        if let watcher { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(watcher), .commonModes) }
-        watcher = nil
+        unwatch()
+        clearPeeks()
+        if !keeping { hideArrows() }
         let from = axFrame(w) ?? target
         let step = textStep
         ended = Date()
@@ -405,6 +418,16 @@ final class Focus {
             self.slide(w, small, self.before) { self.zooming = false; done?() }
         }
         return true
+    }
+
+    // Focus stops listening to the window and the app it had.
+    func unwatch() {
+        if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        observer = nil
+        if let screens { NotificationCenter.default.removeObserver(screens) }
+        screens = nil
+        if let watcher { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(watcher), .commonModes) }
+        watcher = nil
     }
 
     // The window changes size and text in place. Grid covers it with its picture and a still of the screen
@@ -499,11 +522,12 @@ final class Focus {
     }
 
     // The window with its shadow, at its real size.
-    func shot(_ id: CGWindowID, _ w: AXUIElement) async -> Shot? {
-        var win = known
+    // Remember = keep the window for the next picture; the neighbours' pictures leave it alone.
+    func shot(_ id: CGWindowID, _ w: AXUIElement, remember: Bool = true) async -> Shot? {
+        var win = remember ? known : nil
         if win?.windowID != id {
             win = (try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true))?.windows.first { $0.windowID == id }
-            known = win
+            if remember { known = win }
         }
         // The size comes from the window itself: what ScreenCaptureKit remembers is from the first look.
         guard let win, let frame = axFrame(w) else { return nil }
@@ -514,7 +538,7 @@ final class Focus {
         // A canvas bigger than window and shadow keeps the picture at its real size.
         config.width = Int((frame.width + 240) * scale); config.height = Int((frame.height + 240) * scale)
         guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config),
-              let box = solidBox(image), abs(box.width - frame.width * scale) <= 1 else { known = nil; return nil }
+              let box = solidBox(image), abs(box.width - frame.width * scale) <= 1 else { if remember { known = nil }; return nil }
         return Shot(image: image, box: box, frame: frame, scale: scale)
     }
 
