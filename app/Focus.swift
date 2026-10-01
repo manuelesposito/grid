@@ -31,6 +31,10 @@ final class Focus {
     var screen: NSScreen?
     // Waits for the mouse to let go of an edge before the window is evened out.
     var evening: DispatchWorkItem?
+    // Every cover and picture Grid has put on screen, and when Focus last ended: a cover still standing
+    // long after the window has gone home is cleared away.
+    var made: [NSWindow] = []
+    var ended = Date.distantPast
 
     // Setting from the menu: how many times bigger the terminal gets.
     var zoom: Double {
@@ -207,14 +211,26 @@ final class Focus {
         b.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
         let view = BlurView()
         view.material = .fullScreenUI; view.blendingMode = .behindWindow; view.state = .active
-        view.onClick = { [weak self] in self?.home() }
+        view.onClick = { [weak self] in
+            guard let self else { return }
+            if self.active { self.home() } else { self.sweep(now: true) }
+        }
         let dark = FirstClickView(frame: view.bounds)
         dark.autoresizingMask = [.width, .height]; dark.wantsLayer = true
         dark.layer?.backgroundColor = NSColor.black.withAlphaComponent(shade).cgColor
         view.addSubview(dark)
         b.contentView = view
         b.alphaValue = 0
+        made.append(b)
         return b
+    }
+
+    // Once a second, and on a click on a dark that has nothing in the middle: with Focus idle,
+    // whatever Grid still shows comes off the screen.
+    func sweep(now: Bool = false) {
+        made.removeAll { !$0.isVisible }
+        guard !active, !zooming, !handing, now || Date().timeIntervalSince(ended) > 1.5 else { return }
+        for w in made { fade(w, to: 0) { w.orderOut(nil) } }
     }
 
     // Focus moves on to the window that has just come to the front: the covers stay, the old window
@@ -305,6 +321,7 @@ final class Focus {
         watcher = nil
         let from = axFrame(w) ?? target
         let step = textStep
+        ended = Date()
         let covers = keeping ? [] : [b] + others
         window = nil; blur = nil; others = []; textStep = 0
         if !keeping && !staying {
@@ -424,6 +441,7 @@ final class Focus {
         o.isOpaque = false; o.backgroundColor = .clear; o.hasShadow = false; o.ignoresMouseEvents = true
         o.animationBehavior = .none; o.alphaValue = 0.99
         o.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
+        made.append(o)
         return o
     }
 

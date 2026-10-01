@@ -20,7 +20,7 @@ final class App: NSObject, NSApplicationDelegate {
         item.button?.setAccessibilityLabel("Grid")
         rebuild()
         registerHotKeys()
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.closeGap() }
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.closeGap(); self?.focus.sweep() }
         // When Grid quits or is restarted, a focused window goes back first.
         signal(SIGTERM, SIG_IGN)
         quitSignal.setEventHandler { [weak self] in _ = self?.focus.end(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { exit(0) } }
