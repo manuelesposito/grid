@@ -27,6 +27,7 @@ final class Focus {
     // Reads what the terminal is and how many lines it holds, beside the main thread, while the window slides.
     var prepared: Task<Void, Never>?
     var observer: NSObjectProtocol?
+    var screens: NSObjectProtocol?
     // Tells when the app's front window changes, and whether focus is on its way to another window.
     var watcher: AXObserver?
     var handing = false
@@ -187,6 +188,12 @@ final class Focus {
             if let self, other?.processIdentifier != self.app?.processIdentifier, other?.processIdentifier != ProcessInfo.processInfo.processIdentifier { self.handOver() }
         }
         watch(front.processIdentifier, w)
+        // A display plugged in or out: the covers would be on the wrong screens, so Focus ends.
+        screens = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.active else { return }
+            note.log("screens changed")
+            _ = self.end(staying: true)
+        }
 
         if textStep == 0 {
             // Nothing re-wraps: the real window can glide.
@@ -247,11 +254,20 @@ final class Focus {
         for w in made { fade(w, to: 0) { w.orderOut(nil) } }
     }
 
+    // The window in the middle is closed, or its app has quit: Focus ends quietly, nothing to send home.
+    func gone() {
+        guard active else { return }
+        note.log("gone \(self.windowID)")
+        textStep = 0; terminal = ""
+        _ = end(staying: true)
+    }
+
     // Focus moves on to the window that has just come to the front: the covers stay, the old window
     // goes home behind them, then the new one comes to the middle. Without a real window in front, focus ends.
     func handOver() {
         note.log("handOver active=\(self.active) handing=\(self.handing) zooming=\(self.zooming) front=\(self.frontWindow()?.id ?? 0) mine=\(self.windowID)")
         guard active, !handing else { return }
+        if app?.isTerminated == true || window.map({ axFrame($0) == nil }) == true { gone(); return }
         if zooming {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.handOver() }
             return
@@ -293,12 +309,14 @@ final class Focus {
         AXObserverCreate(pid, { _, _, name, me in
             let focus = Unmanaged<Focus>.fromOpaque(me!).takeUnretainedValue()
             if name as String == kAXResizedNotification { DispatchQueue.main.async { focus.resized() }; return }
+            if name as String == kAXUIElementDestroyedNotification { DispatchQueue.main.async { focus.gone() }; return }
             // Sheets and dialogs are no new place for focus; a real window is.
             DispatchQueue.main.async { if let next = focus.frontWindow(), next.id != focus.windowID { focus.handOver() } }
         }, &o)
         guard let o else { return }
         AXObserverAddNotification(o, AXUIElementCreateApplication(pid), kAXFocusedWindowChangedNotification as CFString, Unmanaged.passUnretained(self).toOpaque())
         AXObserverAddNotification(o, w, kAXResizedNotification as CFString, Unmanaged.passUnretained(self).toOpaque())
+        AXObserverAddNotification(o, w, kAXUIElementDestroyedNotification as CFString, Unmanaged.passUnretained(self).toOpaque())
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(o), .commonModes)
         watcher = o
     }
@@ -339,6 +357,8 @@ final class Focus {
         guard let w = window, let b = blur else { return false }
         if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         observer = nil
+        if let screens { NotificationCenter.default.removeObserver(screens) }
+        screens = nil
         if let watcher { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(watcher), .commonModes) }
         watcher = nil
         let from = axFrame(w) ?? target
