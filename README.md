@@ -25,7 +25,6 @@ Settings, Open at Login in its menu.
 - **Bigger text in Focus.** With the Ghostty terminal and a Focus Zoom above 1 ×, the text grows with
   the window. macOS then asks for Screen Recording and for permission to control Ghostty. Grid uses the
   first only for a picture of that one window during the animation; nothing is stored or sent.
-- **Waiting windows.** Claude Code windows that have finished get a coloured edge.
 
 Grid works offline and sends nothing anywhere.
 

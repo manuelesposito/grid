@@ -9,6 +9,9 @@
 import AppKit
 import ScreenCaptureKit
 
+// Until then Grid is animating; checks that would stall the main thread hold off.
+var quietUntil = Date.distantPast
+
 final class Focus {
     var window: AXUIElement?
     var windowID: CGWindowID = 0

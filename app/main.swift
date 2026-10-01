@@ -20,7 +20,6 @@ final class App: NSObject, NSApplicationDelegate {
         item.button?.setAccessibilityLabel("Grid")
         rebuild()
         registerHotKeys()
-        waiting.start()
         // When Grid quits or is restarted, a focused window goes back first.
         signal(SIGTERM, SIG_IGN)
         quitSignal.setEventHandler { [weak self] in _ = self?.focus.end(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { exit(0) } }
@@ -34,9 +33,6 @@ final class App: NSObject, NSApplicationDelegate {
         let auto = NSMenuItem(title: "Automatic", action: #selector(pickAuto), keyEquivalent: "0")
         auto.keyEquivalentModifierMask = [.control, .option]; auto.target = self
         menu.addItem(auto)
-        let jump = NSMenuItem(title: "Go to Waiting Window", action: #selector(jumpToWaiting), keyEquivalent: "w")
-        jump.keyEquivalentModifierMask = [.control, .option]; jump.target = self
-        menu.addItem(jump)
         let f = NSMenuItem(title: "Focus", action: #selector(toggleFocus), keyEquivalent: "f")
         f.keyEquivalentModifierMask = [.control, .option]; f.target = self; f.state = focus.active ? .on : .off
         menu.addItem(f)
@@ -103,10 +99,7 @@ final class App: NSObject, NSApplicationDelegate {
         }
         g.submenu = sub
         settings.addItem(g)
-        let wt = NSMenuItem(title: "Mark Waiting Claude Windows", action: #selector(toggleWaiting), keyEquivalent: "")
-        wt.target = self; wt.state = waiting.enabled ? .on : .off
         settings.addItem(.separator())
-        settings.addItem(wt)
         let l = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin), keyEquivalent: "")
         l.target = self; l.state = SMAppService.mainApp.status == .enabled ? .on : .off
         settings.addItem(l)
@@ -170,7 +163,6 @@ final class App: NSObject, NSApplicationDelegate {
             let d = NSApp.delegate as! App
             switch id.id {
             case 98: d.undo()
-            case 96: d.jumpToWaiting()
             case 95: d.toggleFocus()
             case 97: d.run(d.coding)
             case 99: d.run([])
@@ -184,13 +176,12 @@ final class App: NSObject, NSApplicationDelegate {
         }
         // Control-Option-0 = automatic, Control-Option-Z = undo.
         // Control-Option-C = coding.
-        for (key, id) in [(kVK_ANSI_0, 99), (kVK_ANSI_Z, 98), (kVK_ANSI_C, 97), (kVK_ANSI_W, 96), (kVK_ANSI_F, 95)] {
+        for (key, id) in [(kVK_ANSI_0, 99), (kVK_ANSI_Z, 98), (kVK_ANSI_C, 97), (kVK_ANSI_F, 95)] {
             var ref: EventHotKeyRef?
             RegisterEventHotKey(UInt32(key), UInt32(controlKey | optionKey), EventHotKeyID(signature: OSType(0x47524944), id: UInt32(id)), GetApplicationEventTarget(), 0, &ref)
         }
     }
 
-    let waiting = Waiting()
     let focus = Focus()
     let quitSignal = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
     func applicationWillTerminate(_ n: Notification) { _ = focus.end() }
@@ -245,7 +236,6 @@ final class App: NSObject, NSApplicationDelegate {
         if !focus.toggle() { NSSound.beep() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.rebuild() }
     }
-    @objc func toggleWaiting() { waiting.enabled.toggle(); rebuild() }
 
     // Empty rows = automatic, [0] = coding.
     let coding = [0]
@@ -274,7 +264,6 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func pickAuto() { run([]) }
-    @objc func jumpToWaiting() { if !waiting.jump() { NSSound.beep() } }
     @objc func pickCoding() { run(coding) }
 
     @objc func pick(_ m: NSMenuItem) { run(layouts[m.tag]) }
