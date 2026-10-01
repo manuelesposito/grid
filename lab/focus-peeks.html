@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Focus Peeks</title>
+<style>
+	:root {
+		--ease: cubic-bezier(0.2, 0.9, 0.25, 1);
+		--time: 340ms;
+		--hover-time: 250ms;
+	}
+	* { box-sizing: border-box; }
+	html, body { margin: 0; height: 100%; overflow: hidden; background: #1b2330; font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; }
+
+	#desk { position: fixed; inset: 0; background: radial-gradient(120% 90% at 20% 10%, #4a6fa5, #22314d 55%, #151c2a); }
+	#shade { position: fixed; inset: 0; z-index: 10; backdrop-filter: blur(28px) saturate(1.2); -webkit-backdrop-filter: blur(28px) saturate(1.2); background: rgba(0, 0, 0, 0.9); }
+
+	.card { position: absolute; left: 0; top: 0; border-radius: 12px; overflow: hidden; transform-origin: 0 0; z-index: 20;
+		box-shadow: 0 22px 60px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+		transition: transform var(--time) var(--ease), opacity var(--time) var(--ease); }
+	.card.hovering { transition-duration: var(--hover-time); }
+	.card.still { transition: none; }
+	.card.peek { cursor: pointer; }
+	.bar { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 12px; }
+	.dots { display: flex; gap: 7px; }
+	.dots i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+	.dots i:nth-child(1) { background: #ff5f57; } .dots i:nth-child(2) { background: #febc2e; } .dots i:nth-child(3) { background: #28c840; }
+	.bar span { flex: 1; text-align: center; margin-right: 50px; opacity: 0.7; }
+	.term { background: #16181d; color: #d6d9df; }
+	.term .body { padding: 10px 16px; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; }
+	.web { background: #fff; color: #222; }
+	.web .bar { background: #ececec; }
+	.web .body { padding: 28px 40px; }
+	.web h1 { font: 600 26px/1.2 -apple-system, sans-serif; margin: 0 0 12px; }
+	.web p { margin: 0 0 10px; color: #555; }
+	.web .img { height: 120px; border-radius: 8px; margin: 14px 0; }
+
+	/* The window's name under a peek that has come out, as Stage Manager names its windows. */
+	.name { position: fixed; z-index: 30; color: rgba(255, 255, 255, 0.85); font-size: 12px; font-weight: 500; white-space: nowrap;
+		opacity: 0; transform: translateY(-4px); transition: opacity 200ms ease, transform var(--hover-time) var(--ease); pointer-events: none; }
+	.name.on { opacity: 1; transform: none; }
+	#name-l { left: 16px; } #name-r { right: 16px; text-align: right; }
+
+	/* The arrows, for comparison. */
+	.arrow { position: fixed; top: 50%; z-index: 30; transform: translateY(-50%); border: 0; padding: 0; background: none; cursor: pointer;
+		width: 44px; height: 44px; color: rgba(255, 255, 255, 0.28); opacity: 0; transition: opacity 300ms ease; display: none; }
+	body.arrows .arrow { display: block; }
+	body.awake .arrow { opacity: 1; }
+	.arrow:hover { color: rgba(255, 255, 255, 0.9); }
+	#prev { left: 18px; } #next { right: 18px; }
+
+	#controls { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 40; display: flex; gap: 14px; align-items: center;
+		padding: 8px 12px; border-radius: 14px; background: rgba(40, 40, 46, 0.86); color: #ddd; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+		box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.12); max-width: calc(100vw - 32px); flex-wrap: wrap; justify-content: center; }
+	.group { display: flex; align-items: center; gap: 6px; }
+	.group b { font-weight: 500; opacity: 0.6; margin-right: 2px; }
+	.seg { display: flex; background: rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 2px; }
+	.seg button { border: 0; background: none; color: inherit; font: inherit; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+	.seg button[aria-pressed="true"] { background: rgba(255, 255, 255, 0.2); color: #fff; }
+	#hint { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 40; color: rgba(255, 255, 255, 0.45); font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="desk"></div>
+<div id="shade"></div>
+<div id="stage"></div>
+<div class="name" id="name-l"></div>
+<div class="name" id="name-r"></div>
+
+<button class="arrow" id="prev" aria-label="Previous window"><svg width="44" height="44" viewBox="0 0 44 44"><mask id="mp"><rect width="44" height="44" fill="#fff"/><path d="M25 14 L17 22 L25 30" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></mask><circle cx="22" cy="22" r="22" fill="currentColor" mask="url(#mp)"/></svg></button>
+<button class="arrow" id="next" aria-label="Next window"><svg width="44" height="44" viewBox="0 0 44 44"><mask id="mn"><rect width="44" height="44" fill="#fff"/><path d="M19 14 L27 22 L19 30" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></mask><circle cx="22" cy="22" r="22" fill="currentColor" mask="url(#mn)"/></svg></button>
+
+<div id="hint">Bring the mouse near the left or right edge. Click a peek to bring it in. The arrow keys work too.</div>
+
+<div id="controls">
+	<div class="group"><b>Comes out</b><div class="seg" data-name="out"><button data-v="84">A little</button><button data-v="110" aria-pressed="true">Medium</button><button data-v="150">Far</button></div></div>
+	<div class="group"><b>Brightness</b><div class="seg" data-name="bright"><button data-v="0.65">Soft</button><button data-v="0.8" aria-pressed="true">Medium</button><button data-v="1">Full</button></div></div>
+	<div class="group"><b>Name</b><div class="seg" data-name="name"><button data-v="off">Off</button><button data-v="on" aria-pressed="true">On</button></div></div>
+	<div class="group"><b>Arrows</b><div class="seg" data-name="arrows"><button data-v="off" aria-pressed="true">None</button><button data-v="on">Round</button></div></div>
+</div>
+
+<script>
+const wins = [
+	{ kind: 'term', title: '~/Developer/architrave', app: 'Ghostty', lines: ['$ git status', 'On branch main', 'Changes not staged for commit:', '  modified:   style.css', '  modified:   assets/js/focus-mode.js', '', '$ npm run lint', '✓ 214 files checked'] },
+	{ kind: 'web', title: 'elmastudio.de', app: 'Chrome', h: 'Reading on the web, slowly', p: ['A quiet sheet for the article, a rail for the rest.', 'Every reader can choose the size of the text.'], c: '#e8d9c4' },
+	{ kind: 'term', title: '~/Developer/window-grid', app: 'Ghostty', lines: ['$ ./build.sh', 'Grid.app: replacing existing signature', '', '$ log show --predicate \'subsystem == "grid"\'', 'start 4182 Ghostty reusing=0', 'click on the dark active=true', 'home active=true zooming=false'] },
+	{ kind: 'web', title: 'github.com/manuelesposito/grid', app: 'Safari', h: 'Grid', p: ['A small menu bar tool that arranges your windows.', 'Release v1.1 · notarized'], c: '#cfe0f5' },
+	{ kind: 'term', title: '~', app: 'Ghostty', lines: ['$ claude', '', '  Focus: the way home is softer now.', '', '> _'] },
+];
+const stage = document.getElementById('stage');
+const opts = { out: 110, bright: 0.8, name: 'on', arrows: 'off' };
+const REST = 56, NEAR = 120, DIM = 0.5;
+let cur = 0, near = 0, lastD = wins.map(() => 0);
+
+function cardHTML(w) {
+	const bar = `<div class="bar"><div class="dots"><i></i><i></i><i></i></div><span>${w.title}</span></div>`;
+	if (w.kind === 'term') return bar + `<div class="body">${w.lines.join('\n')}</div>`;
+	return bar + `<div class="body"><h1>${w.h}</h1><p>${w.p[0]}</p><div class="img" style="background:${w.c}"></div><p>${w.p[1]}</p></div>`;
+}
+const cards = wins.map(w => {
+	const el = document.createElement('div');
+	el.className = 'card ' + w.kind; el.innerHTML = cardHTML(w);
+	el.addEventListener('click', () => { if (el.classList.contains('peek')) step(+el.dataset.d); });
+	stage.appendChild(el); return el;
+});
+
+function size() {
+	const W = innerWidth, H = innerHeight;
+	const cw = Math.min(820, W * 0.56), ch = Math.min(H * 0.66, cw * 0.66);
+	return { W, H, cw, ch };
+}
+function dist(i) { let d = (i - cur) % wins.length; if (d > 2) d -= wins.length; if (d < -2) d += wins.length; return d; }
+
+function layout(opt = {}) {
+	const s = size(), cx = (s.W - s.cw) / 2, cy = (s.H - s.ch) / 2 - 14;
+	cards.forEach((el, i) => {
+		el.style.width = s.cw + 'px'; el.style.height = s.ch + 'px';
+		const d = dist(i), out = d !== 0 && Math.abs(d) === 1 && near === d;
+		const k = d === 0 ? 1 : out ? 0.95 : 0.92;
+		const w = s.cw * k, h = s.ch * k;
+		const show = out ? opts.out : REST;
+		let x;
+		if (d === 0) x = cx;
+		else if (d === 1) x = s.W - show;
+		else if (d === -1) x = show - w;
+		else x = d > 0 ? s.W + 40 : -40 - w;
+		el.style.transform = `translate(${x}px, ${cy + (s.ch - h) / 2}px) scale(${k})`;
+		el.style.opacity = d === 0 ? 1 : Math.abs(d) === 1 ? (out ? opts.bright : DIM) : 0;
+		el.classList.toggle('peek', Math.abs(d) === 1);
+		el.dataset.d = d;
+		el.classList.toggle('hovering', !!opt.hover);
+		// Going around: a window that crosses from one far side to the other does so unseen.
+		el.classList.toggle('still', !!opt.first || Math.abs(d - lastD[i]) > 1);
+		lastD[i] = d;
+	});
+	// The name of the peek that has come out, under it.
+	const nb = cy + s.ch * (1 + 0.95) / 2 + 12;
+	['l', 'r'].forEach(side => {
+		const n = document.getElementById('name-' + side), d = side === 'l' ? -1 : 1;
+		const w = wins[(cur + d + wins.length) % wins.length];
+		n.textContent = w.app + ' · ' + w.title;
+		n.style.top = nb + 'px';
+		n.classList.toggle('on', opts.name === 'on' && near === d);
+	});
+	if (opt.first) requestAnimationFrame(() => cards.forEach(c => c.classList.remove('still')));
+}
+function step(by) { cur = (cur + by + wins.length) % wins.length; layout(); }
+
+// Near an edge, at the height of the peeks: that peek comes out. Away again: it goes back.
+addEventListener('mousemove', e => {
+	const s = size(), cy = (s.H - s.ch) / 2 - 14;
+	const level = e.clientY > cy - 40 && e.clientY < cy + s.ch + 40;
+	// A peek that is out keeps its zone a little wider, so it does not flicker at the border.
+	const zone = d => near === d ? Math.max(NEAR, opts.out + 24) : NEAR;
+	const n = !level ? 0 : e.clientX < zone(-1) ? -1 : e.clientX > s.W - zone(1) ? 1 : 0;
+	if (n !== near) { near = n; layout({ hover: true }); }
+	wake();
+});
+addEventListener('mouseleave', () => { if (near) { near = 0; layout({ hover: true }); } });
+
+let rest;
+function wake() { document.body.classList.add('awake'); clearTimeout(rest); rest = setTimeout(() => { if (!document.querySelector('.arrow:hover')) document.body.classList.remove('awake'); }, 1600); }
+document.getElementById('prev').onclick = () => step(-1);
+document.getElementById('next').onclick = () => step(1);
+addEventListener('keydown', e => { if (e.key === 'ArrowLeft') step(-1); if (e.key === 'ArrowRight') step(1); });
+addEventListener('resize', () => layout({ first: true }));
+
+document.querySelectorAll('.seg').forEach(seg => seg.addEventListener('click', e => {
+	const b = e.target.closest('button'); if (!b) return;
+	seg.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+	const v = b.dataset.v;
+	opts[seg.dataset.name] = isNaN(+v) ? v : +v;
+	document.body.classList.toggle('arrows', opts.arrows === 'on');
+	layout({ hover: true });
+}));
+layout({ first: true });
+</script>
+</body>
+</html>

@@ -1,13 +1,14 @@
 // Focus as a row of windows that goes around: the window before and the one after peek in at the screen's
-// edges, dimmed, and round arrows show at the sides when the mouse moves (Manuel, 2026-10-01, picked on
-// lab/focus-arrows.html: "B Round", "Sideways", "Peek in"). A click on an arrow or on a peek, or
-// Control-Option-Left and -Right, slides the row by one: the window in the middle moves aside as a peek,
-// the next one comes in from the edge.
+// edges, dimmed (Manuel, 2026-10-01, picked on lab/focus-arrows.html: "Sideways", "Peek in"). When the mouse
+// comes near an edge, that peek comes out further, brighter and a touch bigger, as Stage Manager's windows
+// answer the mouse (lab/focus-peeks.html: "Far", "Medium", no name, no arrows: the peeks are the buttons).
+// A click on a peek, or Control-Option-Left and -Right, slides the row by one: the window in the middle
+// moves aside as a peek, the next one comes in from where the peek was.
 //
 // Only pictures move. The real windows never travel sideways: the one leaving goes home at once, under the
 // blur and under its own picture; the one coming is set in the middle under the blur, and once its picture
 // has landed the real window is brought up in exactly its place. With Focus Zoom above 1 × a window changes
-// size in the middle, so the pictures could not land on it: then the arrows step the way they did before.
+// size in the middle, so the pictures could not land on it: then Control-Option-Left and -Right step the way they did before.
 import AppKit
 
 struct Peek { let pic: NSWindow; let id: CGWindowID; let shot: Shot }
@@ -17,6 +18,13 @@ extension Focus {
     var edge: CGFloat { 56 }
     var peekScale: CGFloat { 0.92 }
     var peekAlpha: CGFloat { 0.5 }
+    // A peek the mouse has come near: further out, brighter, a touch bigger, on a quicker spring.
+    var outEdge: CGFloat { 150 }
+    var outScale: CGFloat { 0.95 }
+    var outAlpha: CGFloat { 0.8 }
+    var outTime: Double { 0.25 }
+    // How near the edge the mouse has to come.
+    var near: CGFloat { 120 }
     var sideways: Bool { zoom <= 1 }
 
     // The windows on this screen in reading order of their home places, the one in the middle at its home.
@@ -29,16 +37,18 @@ extension Focus {
     }
 
     // Where a picture lies: 0 in the middle, 1 and -1 peeking at the right and left edge, 2 and -2 just past them.
-    func spot(_ s: Shot, _ side: Int) -> CGRect {
+    // Out = the mouse is near that peek.
+    func spot(_ s: Shot, _ side: Int, out: Bool = false) -> CGRect {
         guard let screen else { return s.frame }
-        let k = side == 0 ? 1 : peekScale
+        let k = side == 0 ? 1 : out ? outScale : peekScale
+        let show = out ? outEdge : edge
         let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16), sf = topLeft(screen.frame)
         let w = (s.frame.width * k).rounded(), h = (min(s.frame.height, vf.height) * k).rounded()
         let x: CGFloat
         switch side {
         case 0: x = (vf.midX - w / 2).rounded()
-        case 1: x = sf.maxX - edge
-        case -1: x = sf.minX + edge - w
+        case 1: x = sf.maxX - show
+        case -1: x = sf.minX + show - w
         case 2...: x = sf.maxX + 40
         default: x = sf.minX - 40 - w
         }
@@ -70,13 +80,14 @@ extension Focus {
     }
 
     // A picture glides to a place and an alpha on the way home's clock and curve.
-    func move(_ o: NSWindow, to r: CGRect, alpha: CGFloat, done: (() -> Void)? = nil) {
+    func move(_ o: NSWindow, to r: CGRect, alpha: CGFloat, duration: Double? = nil, done: (() -> Void)? = nil) {
+        let duration = duration ?? homeTime
         let from = o.frame, to = toNS(r), a0 = o.alphaValue
         let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         var start: Date?
         _ = Ticker { t in
             let s = start ?? Date(); start = s
-            let p = still ? 1 : min(1, Date().timeIntervalSince(s) / self.homeTime), e = spring(p)
+            let p = still ? 1 : min(1, Date().timeIntervalSince(s) / duration), e = spring(p)
             o.setFrame(NSRect(x: from.minX + (to.minX - from.minX) * e, y: from.minY + (to.minY - from.minY) * e,
                               width: from.width + (to.width - from.width) * e, height: from.height + (to.height - from.height) * e), display: true)
             o.alphaValue = a0 + (alpha - a0) * e
@@ -89,7 +100,7 @@ extension Focus {
         guard active, sideways, !handing, let screen, let b = blur else { return }
         // The blur has just been put under the window in the middle; the peeks lie above it again.
         for p in peeks.values { p.pic.order(.above, relativeTo: b.windowNumber) }
-        showArrows()
+        watch()
         let r = ring(screen), mine = windowID
         guard r.count > 1, let i = r.firstIndex(where: { $0.id == mine }) else { return }
         var sides = [(1, r[(i + 1) % r.count])]
@@ -108,8 +119,7 @@ extension Focus {
         let p = peekWindow(s, side: side * 2)
         p.order(.above, relativeTo: b.windowNumber)
         peeks[side] = Peek(pic: p, id: id, shot: s)
-        move(p, to: spot(s, side), alpha: peekAlpha)
-        raiseArrows()
+        move(p, to: spot(s, side, out: out == side), alpha: out == side ? outAlpha : peekAlpha)
     }
 
     func clearPeeks() {
@@ -130,6 +140,7 @@ extension Focus {
         let covers = [b] + others, oldID = windowID, oldHome = before
         let after = r.count > 2 ? r[(i + 2 * by + 2 * r.count) % r.count] : nil
         // The picture of the window after next is taken meanwhile.
+        out = 0
         let coming = after.map { a in Task { @MainActor in await self.shot(a.id, a.ax, remember: false) } }
         Task { @MainActor in
             guard let cur = await self.shot(oldID, w) else { self.handing = false; return }
@@ -143,7 +154,6 @@ extension Focus {
             for c in covers.reversed() { c.order(.above, relativeTo: Int(oldID)) }
             curPic.order(.above, relativeTo: b.windowNumber)
             for p in self.peeks.values { p.pic.order(.above, relativeTo: b.windowNumber) }
-            self.raiseArrows()
             self.unwatch()
             self.window = nil; self.blur = nil; self.others = []
             place(w, oldHome)
@@ -171,8 +181,7 @@ extension Focus {
                 p.order(.above, relativeTo: b.windowNumber)
                 self.peeks[by] = Peek(pic: p, id: a.id, shot: s)
                 self.move(p, to: self.spot(s, by), alpha: self.peekAlpha)
-                self.raiseArrows()
-            }
+                }
         }
         return true
     }
@@ -192,7 +201,7 @@ extension Focus {
             handing = false
             if !start(reusing: covers, home: home) {
                 for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
-                clearPeeks(); hideArrows()
+                clearPeeks(); unwatchMouse()
             }
             // One frame for the real window to be drawn over its picture.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { picture.orderOut(nil) }
@@ -200,53 +209,36 @@ extension Focus {
         ready()
     }
 
-    // MARK: The arrows
+    // MARK: The mouse near an edge
 
-    func showArrows() {
-        guard let screen else { return }
-        if arrows.isEmpty {
-            arrows = [-1, 1].map { dir in
-                let p = QuietPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-                p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false; p.hidesOnDeactivate = false
-                p.animationBehavior = .none; p.alphaValue = 0
-                p.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
-                let v = ArrowButton(dir)
-                v.onClick = { [weak self] in self?.step(dir) }
-                p.contentView = v
-                made.append(p)
-                return p
-            }
-            lastMouse = NSEvent.mouseLocation
-            mouseWatch = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.watchMouse() }
-            RunLoop.main.add(mouseWatch!, forMode: .common)
-        }
-        let sf = screen.frame, vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16)
-        let midY = toNS(CGRect(x: 0, y: vf.midY, width: 0, height: 0)).minY
-        for (a, dir) in zip(arrows, [-1, 1]) {
-            a.setFrame(NSRect(x: dir < 0 ? sf.minX + 18 : sf.maxX - 18 - 44, y: midY - 22, width: 44, height: 44), display: true)
-            a.orderFrontRegardless()
-        }
+    // Looked at 30 times a second while Focus shows peeks: cheaper than a mouse monitor, and it sees the
+    // mouse over Grid's own covers too, which a global monitor does not.
+    func watch() {
+        guard mouseWatch == nil else { return }
+        let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.watchMouse() }
+        RunLoop.main.add(t, forMode: .common)
+        mouseWatch = t
     }
 
-    func raiseArrows() { for a in arrows { a.orderFrontRegardless() } }
-
-    func hideArrows() {
-        mouseWatch?.invalidate(); mouseWatch = nil; arrowsShown = false
-        for a in arrows { fade(a, to: 0) { a.orderOut(nil) } }
-        arrows = []
+    func unwatchMouse() {
+        mouseWatch?.invalidate(); mouseWatch = nil; out = 0
     }
 
-    // The arrows show while the mouse moves and fade when it rests, as in Photos.
     func watchMouse() {
-        let m = NSEvent.mouseLocation
-        let hovering = arrows.contains { $0.frame.contains(m) }
-        if m != lastMouse {
-            lastMouse = m; restSince = Date()
-            if !arrowsShown { arrowsShown = true; for a in arrows { fade(a, to: 1) } }
-        } else if arrowsShown, !hovering, Date().timeIntervalSince(restSince) > 1.6 {
-            arrowsShown = false
-            for a in arrows { fade(a, to: 0, duration: 0.3) }
+        guard !handing, let screen else { return }
+        let m = NSEvent.mouseLocation, sf = screen.frame
+        // A peek that is out keeps its zone a little wider, so it does not flicker at the border.
+        func zone(_ side: Int) -> CGFloat { out == side ? max(near, outEdge + 24) : near }
+        func level(_ side: Int) -> Bool { peeks[side].map { $0.pic.frame.insetBy(dx: 0, dy: -40).contains(NSPoint(x: $0.pic.frame.midX, y: m.y)) } ?? false }
+        let side = !sf.contains(m) ? 0
+            : m.x < sf.minX + zone(-1) && level(-1) ? -1
+            : m.x > sf.maxX - zone(1) && level(1) ? 1 : 0
+        guard side != out else { return }
+        for (s, p) in peeks where s == out || s == side {
+            let o = s == side
+            move(p.pic, to: spot(p.shot, s, out: o), alpha: o ? outAlpha : peekAlpha, duration: outTime)
         }
+        out = side
     }
 }
 
@@ -262,34 +254,4 @@ final class Tap: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
-}
-
-// A solid round shape with a fine arrow cut out of it; brighter under the mouse.
-final class ArrowButton: NSView {
-    let dir: Int
-    var onClick: (() -> Void)?
-    var hover = false { didSet { needsDisplay = true } }
-    init(_ dir: Int) { self.dir = dir; super.init(frame: NSRect(x: 0, y: 0, width: 44, height: 44)) }
-    required init?(coder: NSCoder) { nil }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func mouseDown(with event: NSEvent) { onClick?() }
-    override func updateTrackingAreas() {
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-    }
-    override func mouseEntered(with event: NSEvent) { hover = true }
-    override func mouseExited(with event: NSEvent) { hover = false }
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.white.withAlphaComponent(hover ? 0.9 : 0.28).setFill()
-        NSBezierPath(ovalIn: bounds).fill()
-        let c = NSGraphicsContext.current
-        c?.saveGraphicsState()
-        c?.compositingOperation = .clear
-        let a = NSBezierPath()
-        let x0: CGFloat = dir < 0 ? 25 : 19, x1: CGFloat = dir < 0 ? 17 : 27
-        a.move(to: NSPoint(x: x0, y: 14)); a.line(to: NSPoint(x: x1, y: 22)); a.line(to: NSPoint(x: x0, y: 30))
-        a.lineWidth = 1.6; a.lineCapStyle = .round; a.lineJoinStyle = .round
-        a.stroke()
-        c?.restoreGraphicsState()
-    }
 }

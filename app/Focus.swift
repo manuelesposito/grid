@@ -42,12 +42,11 @@ final class Focus {
     var ended = Date.distantPast
     // Tells the app that a cover is up, so it starts to look for leftovers.
     var onCover: (() -> Void)?
-    // The row that goes around (Carousel.swift): the pictures peeking in at the edges, the arrows,
-    // and the mouse that wakes them.
+    // The row that goes around (Carousel.swift): the pictures peeking in at the edges, the look at the
+    // mouse, and which peek it has brought out (-1, 1, or 0 for none).
     var peeks: [Int: Peek] = [:]
-    var arrows: [NSWindow] = []
     var mouseWatch: Timer?
-    var lastMouse = NSPoint.zero, restSince = Date(), arrowsShown = false
+    var out = 0
 
     // Setting from the menu: how many times bigger the terminal gets.
     var zoom: Double {
@@ -311,7 +310,7 @@ final class Focus {
             self.handing = false
             if !self.start(reusing: covers) {
                 for c in covers { self.fade(c, to: 0) { c.orderOut(nil) } }
-                self.hideArrows()
+                self.unwatchMouse()
             } else if !grown {
                 // Home again, the old window goes back under the blur.
                 DispatchQueue.main.asyncAfter(deadline: .now() + self.time + 0.05) {
@@ -376,7 +375,7 @@ final class Focus {
         guard let w = window, let b = blur else { return false }
         unwatch()
         clearPeeks()
-        if !keeping { hideArrows() }
+        if !keeping { unwatchMouse() }
         let from = axFrame(w) ?? target
         let step = textStep
         ended = Date()
