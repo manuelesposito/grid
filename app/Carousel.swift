@@ -17,7 +17,7 @@ extension Focus {
     // How much of a neighbour shows at the edge, and how much smaller it is than in the middle.
     var edge: CGFloat { 56 }
     var peekScale: CGFloat { 0.92 }
-    var peekAlpha: CGFloat { 0.5 }
+    var peekAlpha: CGFloat { 0.6 }
     // A peek the mouse has come near: further out, brighter, a touch bigger, on a quicker spring.
     var outEdge: CGFloat { 150 }
     var outScale: CGFloat { 0.95 }

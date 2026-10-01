@@ -60,9 +60,9 @@ final class Focus {
         get { UserDefaults.standard.object(forKey: "focusZoom") as? Double ?? 2 }
         set { UserDefaults.standard.set(newValue, forKey: "focusZoom") }
     }
-    // No dark at all since 2026-10-01 (Manuel: "they wouldn't make it dark, not dark at all … a strong blur"):
-    // only the frosted glass, which follows Light and Dark mode. The layer stays for the click on it.
-    let shade = 0.0
+    // A light dim over the frosted glass, as Launchpad and Mission Control do (Manuel, 2026-10-01: 55 % read
+    // as modal, none left the glass bright and busy beside dark terminals; 20 % picked).
+    let shade = 0.2
     var textStep = 0.0
     var cellsBefore: [String: Cells] = [:], keepRows = true
     // One duration and one curve for everything Focus moves or fades.
