@@ -3,7 +3,7 @@
 A small menu bar tool for the Mac that arranges your windows in tidy rows, with an even space between them.
 
 - **Layouts:** pick one from the menu, or press Control-Option-1 to 9. Control-Option-0 chooses one for you.
-- **Coding:** the browser on the left, terminals stacked on the right (Control-Option-C).
+- **Coding:** the browser on the left, terminals stacked on the right (Control-Option-C). Without a browser on the screen Grid beeps.
 - **Custom:** up to four rows, each with your own number of windows.
 - **Closing a window** after an arrangement: the others close the gap with the automatic layout.
 - **Focus** is a mode (Control-Option-F). While it is on, the window you click moves to the middle and

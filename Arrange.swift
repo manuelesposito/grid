@@ -131,12 +131,15 @@ let browsers: Set<String> = ["com.google.Chrome", "com.apple.Safari", "company.t
 let codingApps: Set<String> = ["com.mitchellh.ghostty", "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.anthropic.claudefordesktop"]
 
 // Coding: the front browser window on the left (60 %), terminal and Claude windows stacked on the right.
+// Without a browser on the screen nothing happens.
 @discardableResult
 func arrangeCoding(gap: CGFloat) -> Result {
     guard trusted(), let screen = targetScreen() else { return (0, 0, []) }
     let windows = visibleWindows(on: screen)
     let browser = windows.first { browsers.contains($0.bundle) }
     let coding = windows.filter { codingApps.contains($0.bundle) }
+    // Without a browser on this screen there is nothing to put on the left: a beep, not a surprise layout.
+    guard browser != nil else { return (0, coding.count, []) }
     let vf = topLeft(screen.visibleFrame)
     var pairs: [(Win, CGRect)] = []
     var right = vf
@@ -151,7 +154,7 @@ func arrangeCoding(gap: CGFloat) -> Result {
     let n = coding.count
     guard n > 0 || !pairs.isEmpty else { return (0, 0, []) }
     // Up to 3 stacked, then two per row.
-    let rows = n == 0 ? [] : browser == nil ? autoRows(n) : n <= 3 ? Array(repeating: 1, count: n) : (0..<(n + 1) / 2).map { $0 < n / 2 ? 2 : 1 }
+    let rows = n == 0 ? [] : n <= 3 ? Array(repeating: 1, count: n) : (0..<(n + 1) / 2).map { $0 < n / 2 ? 2 : 1 }
     if !rows.isEmpty { pairs += zip(coding, tiles(rows, in: right, gap: gap)) }
     return move(pairs, found: pairs.count)
 }

@@ -232,11 +232,20 @@ final class Focus {
         handing = true
         movingUntil = Date().addingTimeInterval(0.8)
         let covers = [b] + others
-        for c in covers { c.order(.below, relativeTo: Int(next.id)) }
+        let old = windowID, grown = textStep != 0
+        // Both windows lie above the blur: the old one is seen sliding home while the next comes to the middle.
+        // A grown terminal goes home in one step and does that behind the blur.
+        for c in covers { c.order(.below, relativeTo: Int(next.id)); if !grown { c.order(.below, relativeTo: Int(old)) } }
         _ = end(keeping: true) {
             self.handing = false
             if !self.start(reusing: covers) {
                 for c in covers { self.fade(c, to: 0) { c.orderOut(nil) } }
+            } else if !grown {
+                // Home again, the old window goes back under the blur.
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.time + 0.05) {
+                    guard self.active else { return }
+                    for c in covers.reversed() { c.order(.above, relativeTo: Int(old)) }
+                }
             }
         }
     }
