@@ -5,6 +5,7 @@ A small menu bar tool for the Mac that arranges your windows in tidy rows, with 
 - **Layouts:** pick one from the menu, or press Control-Option-1 to 9. Control-Option-0 chooses one for you.
 - **Coding:** the browser on the left, terminals stacked on the right (Control-Option-C).
 - **Custom:** up to four rows, each with your own number of windows.
+- **Closing a window** after an arrangement: the others close the gap with the automatic layout.
 - **Focus** is a mode (Control-Option-F). While it is on, the window you click moves to the middle and
   everything behind it goes dark. A click on the dark sends it home; the next click picks another. The same key turns Focus off.
 - **Workspaces:** save the windows on the screen and open them again later.

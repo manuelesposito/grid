@@ -20,6 +20,7 @@ final class App: NSObject, NSApplicationDelegate {
         item.button?.setAccessibilityLabel("Grid")
         rebuild()
         registerHotKeys()
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.closeGap() }
         // When Grid quits or is restarted, a focused window goes back first.
         signal(SIGTERM, SIG_IGN)
         quitSignal.setEventHandler { [weak self] in _ = self?.focus.end(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { exit(0) } }
@@ -245,11 +246,26 @@ final class App: NSObject, NSApplicationDelegate {
         set { UserDefaults.standard.set(newValue, forKey: "last") }
     }
     var undoFrames: [(AXUIElement, CGRect)] = []
+    // The windows of the last arrangement; when one of them closes, the rest close the gap.
+    var arranged: Set<CGWindowID> = []
     // A short sound when there is nothing to arrange.
     func run(_ rows: [Int]) {
         last = rows
         let result = rows == coding ? arrangeCoding(gap: gap) : arrange(rows, gap: gap)
         if result.placed == 0 { NSSound.beep() } else if undoFrames.isEmpty || !sameWindows(result.before) { undoFrames = result.before }
+        arranged = Set(result.before.compactMap { w, _ in var id: CGWindowID = 0; return _AXUIElementGetWindow(w, &id) == .success ? id : nil })
+    }
+
+    // Once a second: an arranged window that is gone for good (not just hidden or on another desktop)
+    // makes the others take the automatic layout. The last one left stays where it is.
+    func closeGap() {
+        guard arranged.count > 1, !focus.active, !gliding else { return }
+        let info = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
+        let alive = Set(info.compactMap { $0[kCGWindowNumber as String] as? CGWindowID })
+        let gone = arranged.subtracting(alive)
+        guard !gone.isEmpty else { return }
+        arranged.subtract(gone)
+        run([])
     }
 
     // Undo keeps the places from before the first of several arrangements in a row.
