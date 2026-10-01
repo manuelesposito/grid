@@ -116,10 +116,13 @@ final class App: NSObject, NSApplicationDelegate {
         l.count == 1 ? "\(l[0]) in a row" : l.map(String.init).joined(separator: " + ")
     }
 
-    // A small picture of the layout: the screen as one solid rounded shape, split by fine cuts.
+    // A small picture of the layout, in the shape of Apple's own window tiling icons: a thin outlined
+    // frame, the windows as solid rounded tiles inside it with a little air around them.
     // Drawn in half points, the pixels of the screen, so every edge sits on a whole pixel.
     func icon(_ rows: [Int], w: Int = 60, h: Int = 38, radius: CGFloat = 7) -> NSImage {
-        let cut = 2
+        let line = 3, air = 3, cut = 3
+        let inset = line + air
+        let iw = w - 2 * inset, ih = h - 2 * inset
         // Whole-pixel sizes for n parts with cuts between them.
         func parts(_ total: Int, _ n: Int) -> [Int] {
             let room = total - cut * (n - 1)
@@ -128,15 +131,15 @@ final class App: NSObject, NSApplicationDelegate {
         var tiles: [NSRect] = []
         if rows == coding {
             // Big browser tile on the left, two stacked on the right.
-            let split = Int((Double(w) * 0.3).rounded()) * 2, hs = parts(h, 2)
-            tiles = [NSRect(x: 0, y: 0, width: split, height: h),
-                     NSRect(x: split + cut, y: 0, width: w - split - cut, height: hs[0]),
-                     NSRect(x: split + cut, y: hs[0] + cut, width: w - split - cut, height: hs[1])]
+            let split = Int((Double(iw) * 0.3).rounded()) * 2, hs = parts(ih, 2)
+            tiles = [NSRect(x: 0, y: 0, width: split, height: ih),
+                     NSRect(x: split + cut, y: 0, width: iw - split - cut, height: hs[0]),
+                     NSRect(x: split + cut, y: hs[0] + cut, width: iw - split - cut, height: hs[1])]
         } else {
             var y = 0
-            for (rowH, count) in zip(parts(h, rows.count), rows) {
+            for (rowH, count) in zip(parts(ih, rows.count), rows) {
                 var x = 0
-                for colW in parts(w, count) {
+                for colW in parts(iw, count) {
                     tiles.append(NSRect(x: x, y: y, width: colW, height: rowH))
                     x += colW + cut
                 }
@@ -145,9 +148,12 @@ final class App: NSObject, NSApplicationDelegate {
         }
         let img = NSImage(size: NSSize(width: w / 2, height: h / 2), flipped: true) { _ in
             let half = NSAffineTransform(); half.scale(by: 0.5); half.concat()
-            NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: h), xRadius: radius, yRadius: radius).addClip()
-            NSColor.black.setFill()
-            for tile in tiles { NSBezierPath(roundedRect: tile, xRadius: 1, yRadius: 1).fill() }
+            NSColor.black.set()
+            let l = CGFloat(line)
+            let frame = NSBezierPath(roundedRect: NSRect(x: l / 2, y: l / 2, width: CGFloat(w) - l, height: CGFloat(h) - l), xRadius: radius - l / 2, yRadius: radius - l / 2)
+            frame.lineWidth = l
+            frame.stroke()
+            for tile in tiles { NSBezierPath(roundedRect: tile.offsetBy(dx: CGFloat(inset), dy: CGFloat(inset)), xRadius: 1.5, yRadius: 1.5).fill() }
             return true
         }
         img.isTemplate = true
