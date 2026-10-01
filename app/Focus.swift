@@ -1,7 +1,7 @@
 // Focus: the front window moves to the middle and everything behind it blurs.
 // A Ghostty window grows with its text by the same factor, so every line keeps its length;
-// when it would be too tall, only the height gives way. The same key or a click on the blur ends it;
-// switching to another window takes focus along.
+// when it would be too tall, only the height gives way. The same key ends it. Focus is a mode: clicks go
+// through the blur, and the window that comes to the front takes the middle; a click on the desktop ends it.
 //
 // A terminal slides to the middle at its size, then grows there in one soft fade: Grid covers it with its picture,
 // changes size and text once, unseen, and fades to a picture of the result, which is exactly the real window.
@@ -150,14 +150,14 @@ final class Focus {
         return true
     }
 
-    // Blur and a dark layer over one whole screen; a click on it ends focus.
+    // Blur and a dark layer over one whole screen. Clicks go through to the windows beneath.
     func cover(_ screen: NSScreen) -> NSWindow {
         let b = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         b.isOpaque = false; b.backgroundColor = .clear; b.hasShadow = false; b.animationBehavior = .none
+        b.ignoresMouseEvents = true
         b.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
-        let view = BlurView()
+        let view = NSVisualEffectView()
         view.material = .fullScreenUI; view.blendingMode = .behindWindow; view.state = .active
-        view.onClick = { [weak self] in _ = self?.toggle() }
         let dark = NSView(frame: view.bounds)
         dark.autoresizingMask = [.width, .height]; dark.wantsLayer = true
         dark.layer?.backgroundColor = NSColor.black.withAlphaComponent(shade).cgColor
@@ -234,7 +234,7 @@ final class Focus {
     // Keeping = the covers stay for the next window. Staying = the app in front stays in front,
     // for when the person has just switched to it.
     func end(keeping: Bool = false, staying: Bool = false, done: (() -> Void)? = nil) -> Bool {
-        // A switch of app or a click while the window is still zooming ends focus once it has landed.
+        // A switch of app while the window is still zooming ends focus once it has landed.
         if zooming {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { _ = self.end(keeping: keeping, staying: staying, done: done) }
             return true
@@ -445,10 +445,6 @@ func toNS(_ r: CGRect) -> NSRect {
     return NSRect(x: r.minX, y: h - r.maxY, width: r.width, height: r.height)
 }
 
-final class BlurView: NSVisualEffectView {
-    var onClick: (() -> Void)?
-    override func mouseDown(with event: NSEvent) { onClick?() }
-}
 
 // A window macOS may place partly off screen (the shadow room of the picture reaches past the edges).
 final class FreeWindow: NSWindow {

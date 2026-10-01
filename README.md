@@ -6,7 +6,7 @@ A small menu bar tool for the Mac that arranges your windows in tidy rows, with 
 - **Coding:** the browser on the left, terminals stacked on the right (Control-Option-C).
 - **Custom:** up to four rows, each with your own number of windows.
 - **Focus:** the front window moves to the middle and everything behind it goes dark (Control-Option-F).
-  Switch to another window and Focus follows.
+  Click any other window and it takes the middle; the same key, or a click on the desktop, ends Focus.
 - **Workspaces:** save the windows on the screen and open them again later.
 - **Undo:** Control-Option-Z puts the windows back.
 
