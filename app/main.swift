@@ -15,6 +15,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        screenClock = true
         UserDefaults.standard.register(defaults: ["gap": 8.0])
         item.button?.image = icon(coding, w: 36, h: 28, radius: 6)
         item.button?.setAccessibilityLabel("Grid")

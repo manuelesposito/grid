@@ -54,6 +54,9 @@ final class Focus {
     var cellsBefore: [String: Cells] = [:], keepRows = true
     // One duration and one curve for everything Focus moves or fades.
     let time = 0.2, power = 3.0
+    // The way home after a click on the dark is a little longer and starts soft (spring() in Arrange.swift),
+    // the window and the blur on the same clock: a fast start right under the hand felt like a bump.
+    let homeTime = 0.34
 
     var active: Bool { window != nil }
 
@@ -105,8 +108,8 @@ final class Focus {
     func home() {
         note.log("home active=\(self.active) zooming=\(self.zooming) blocked=\(Date() <= self.movingUntil)")
         guard active, !zooming, Date() > movingUntil else { return }
-        movingUntil = Date().addingTimeInterval(0.3)
-        _ = end()
+        movingUntil = Date().addingTimeInterval(homeTime + 0.05)
+        _ = end(soft: true)
     }
 
     // The click landed in the front window: that one goes to the middle. Clicks elsewhere (menu bar, desktop,
@@ -347,10 +350,10 @@ final class Focus {
 
     // Keeping = the covers stay for the next window. Staying = the app in front stays in front,
     // for when the person has just switched to it.
-    func end(keeping: Bool = false, staying: Bool = false, done: (() -> Void)? = nil) -> Bool {
+    func end(keeping: Bool = false, staying: Bool = false, soft: Bool = false, done: (() -> Void)? = nil) -> Bool {
         // A switch of app while the window is still zooming ends focus once it has landed.
         if zooming {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { _ = self.end(keeping: keeping, staying: staying, done: done) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { _ = self.end(keeping: keeping, staying: staying, soft: soft, done: done) }
             return true
         }
         note.log("end keeping=\(keeping) staying=\(staying) active=\(self.active) step=\(self.textStep)")
@@ -366,10 +369,13 @@ final class Focus {
         ended = Date()
         let covers = keeping ? [] : [b] + others
         window = nil; blur = nil; others = []; textStep = 0
-        if !keeping && !staying {
-            // Bringing an app forward that is in front already makes it busy for a moment, and the slide home waits.
+        // Bringing an app forward that is in front already makes it busy for a moment, and the slide home waits.
+        let bringForward = { [app] in
             if NSWorkspace.shared.frontmostApplication?.processIdentifier != app?.processIdentifier { app?.activate() }
         }
+        // The soft way home brings the app forward once the window has landed: while it activates, the app
+        // answers the moves late and the slide stutters.
+        if !keeping && !staying && !(soft && step == 0) { bringForward() }
         if keeping {
             // Behind the covers nobody watches: the window goes home while the next one is already on its way,
             // a grown terminal in one step.
@@ -381,8 +387,13 @@ final class Focus {
             return true
         }
         if step == 0 {
-            slide(w, from, before) { done?() }
-            for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
+            if soft {
+                slide(w, from, before, duration: homeTime, soft: true) { if !staying { bringForward() }; done?() }
+                for c in covers { fade(c, to: 0, duration: homeTime, soft: true) { c.orderOut(nil) } }
+            } else {
+                slide(w, from, before) { done?() }
+                for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
+            }
             return true
         }
         // The blur starts to clear at once, so the key feels answered. Meanwhile the window shrinks
@@ -522,25 +533,24 @@ final class Focus {
 
     // Grid steps the fade itself, in time with the slide. Left to macOS, a fade that starts on a window
     // just put on screen shows its first third in one jump.
-    func fade(_ w: NSWindow, to alpha: CGFloat, done: (() -> Void)? = nil) {
-        let duration = time, power = power
+    func fade(_ w: NSWindow, to alpha: CGFloat, duration: Double? = nil, soft: Bool = false, done: (() -> Void)? = nil) {
+        let duration = duration ?? time, ease = soft ? spring : easeOut(power)
         let from = w.alphaValue
         var start: Date?
-        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { timer in
+        _ = Ticker { timer in
             // The clock starts with the first tick, when the window is really there.
             let s = start ?? Date(); start = s
-            let t = min(1, Date().timeIntervalSince(s) / duration), e = 1 - pow(1 - t, power)
-            w.alphaValue = from + (alpha - from) * e
+            let t = min(1, Date().timeIntervalSince(s) / duration)
+            w.alphaValue = from + (alpha - from) * ease(t)
             if t >= 1 { timer.invalidate(); done?() }
         }
-        RunLoop.main.add(timer, forMode: .common)
     }
 
     // A slide in Focus's own time and curve. With Reduce Motion on in System Settings the window does not
     // travel: it is simply there, and only the background fades.
-    func slide(_ w: AXUIElement, _ from: CGRect, _ to: CGRect, done: (() -> Void)? = nil) {
+    func slide(_ w: AXUIElement, _ from: CGRect, _ to: CGRect, duration: Double? = nil, soft: Bool = false, done: (() -> Void)? = nil) {
         let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        glide([(w, still ? to : from, to)], duration: time, power: power, done: done)
+        glide([(w, still ? to : from, to)], duration: duration ?? time, power: power, soft: soft, done: done)
     }
 
     func centred(_ size: CGSize, on c: CGPoint) -> CGRect {

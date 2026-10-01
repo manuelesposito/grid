@@ -1,6 +1,7 @@
 // Shared by the menu bar app and the grid command.
 import AppKit
 import ApplicationServices
+import QuartzCore
 
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ el: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
@@ -188,28 +189,76 @@ func place(_ w: AXUIElement, _ frame: CGRect) {
     AXUIElementSetAttributeValue(w, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!)
 }
 
-// Moves windows to their new frames: fast start, soft landing, then calls done.
+// A clock that ticks with the screen, so every step of a motion lands on a frame of its own. A plain
+// 60-a-second timer drifts against the screen and now and then shows two steps in one frame and none
+// in the next: the motion stutters. The app turns the screen's clock on; the command keeps the timer.
+var screenClock = false
+final class Ticker: NSObject {
+    private var link: CADisplayLink?
+    private var timer: Timer?
+    private let tick: (Ticker) -> Void
+    var isValid: Bool { link != nil || timer != nil }
+    init(_ tick: @escaping (Ticker) -> Void) {
+        self.tick = tick
+        super.init()
+        if screenClock, let screen = NSScreen.main {
+            let l = screen.displayLink(target: self, selector: #selector(step))
+            l.add(to: .main, forMode: .common)
+            link = l
+        } else {
+            // The timer holds the ticker until it is stopped, as the screen's clock does.
+            let t = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in self.step() }
+            RunLoop.main.add(t, forMode: .common)
+            timer = t
+        }
+    }
+    @objc private func step() { tick(self) }
+    func invalidate() { link?.invalidate(); link = nil; timer?.invalidate(); timer = nil }
+}
+
+// Fast start, soft landing: the curve for arranging.
+func easeOut(_ power: Double) -> (Double) -> Double { { t in 1 - pow(1 - t, power) } }
+// A soft start that picks up speed at once and settles without a bump, like a spring with no bounce.
+func spring(_ t: Double) -> Double {
+    let k = 9.0
+    return (1 - (1 + k * t) * exp(-k * t)) / (1 - (1 + k) * exp(-k))
+}
+
+// Moves windows to their new frames, then calls done.
 let glideTime = 0.18
 // A window is in one glide at a time: a new glide stops an older one that moves the same window.
 // Different windows glide side by side, one going home while the next comes in.
-var glides: [(timer: Timer, windows: [AXUIElement])] = []
+var glides: [(timer: Ticker, windows: [AXUIElement])] = []
 var gliding: Bool { glides.contains { $0.timer.isValid } }
-func glide(_ moves: [(AXUIElement, from: CGRect, to: CGRect)], duration: Double = glideTime, power: Double = 5, done: (() -> Void)? = nil) {
+func glide(_ moves: [(AXUIElement, from: CGRect, to: CGRect)], duration: Double = glideTime, power: Double = 5,
+           soft: Bool = false, done: (() -> Void)? = nil) {
     glides.removeAll { g in
         let same = g.windows.contains { a in moves.contains { CFEqual($0.0, a) } }
         if same { g.timer.invalidate() }
         return same || !g.timer.isValid
     }
-    let start = Date()
-    let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { timer in
-        let t = min(1, Date().timeIntervalSince(start) / duration)
-        let e = 1 - pow(1 - t, power)
+    let ease = soft ? spring : easeOut(power)
+    var start: Date?
+    let timer = Ticker { timer in
+        // The clock starts with the first frame, so the first step is not already a jump.
+        let s = start ?? Date(); start = s
+        let t = min(1, Date().timeIntervalSince(s) / duration)
+        let e = ease(t)
         for (w, a, b) in moves {
-            if t >= 1 { place(w, b); continue }
+            // A window that only moves is never resized on the way: every resize makes the app lay
+            // itself out again, and that costs frames.
+            let moving = a.size == b.size
+            if t >= 1 {
+                if moving { var pos = b.origin; AXUIElementSetAttributeValue(w, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &pos)!) }
+                else { place(w, b) }
+                continue
+            }
             var pos = CGPoint(x: a.minX + (b.minX - a.minX) * e, y: a.minY + (b.minY - a.minY) * e)
-            var size = CGSize(width: a.width + (b.width - a.width) * e, height: a.height + (b.height - a.height) * e)
             AXUIElementSetAttributeValue(w, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &pos)!)
-            AXUIElementSetAttributeValue(w, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!)
+            if !moving {
+                var size = CGSize(width: a.width + (b.width - a.width) * e, height: a.height + (b.height - a.height) * e)
+                AXUIElementSetAttributeValue(w, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!)
+            }
         }
         if t >= 1 { timer.invalidate(); done?() }
     }
