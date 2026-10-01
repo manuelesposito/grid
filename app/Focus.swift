@@ -8,6 +8,10 @@
 // Changing a terminal's size or text during an animation re-wraps its lines on every frame, which flickers.
 import AppKit
 import ScreenCaptureKit
+import os
+
+// What Focus does, for `log show --predicate 'subsystem == "grid"' --last 5m`.
+let note = Logger(subsystem: "grid", category: "focus")
 
 final class Focus {
     var window: AXUIElement?
@@ -58,6 +62,7 @@ final class Focus {
     var clicks: Any?
     func toggle() -> Bool {
         guard Date() > movingUntil else { return true }
+        note.log("toggle armed=\(self.armed) active=\(self.active)")
         if armed {
             armed = false
             if let clicks { NSEvent.removeMonitor(clicks) }; clicks = nil
@@ -75,6 +80,7 @@ final class Focus {
     // Control-Option-Left and -Right: the window before or after this one, in reading order of their
     // places on the screen, takes the middle. Without a window in the middle, the front one does.
     func step(_ by: Int) {
+        note.log("step \(by) armed=\(self.armed) active=\(self.active) blocked=\(Date() <= self.movingUntil)")
         guard armed, Date() > movingUntil else { return }
         guard active, let screen else { _ = start(); return }
         let wins = visibleWindows(on: screen)
@@ -93,6 +99,7 @@ final class Focus {
 
     // The window goes home and the covers clear; the mode stays on for the next click.
     func home() {
+        note.log("home active=\(self.active) zooming=\(self.zooming) blocked=\(Date() <= self.movingUntil)")
         guard active, !zooming, Date() > movingUntil else { return }
         movingUntil = Date().addingTimeInterval(0.4)
         _ = end()
@@ -104,6 +111,7 @@ final class Focus {
         guard armed, !active, Date() > movingUntil, let front = frontWindow(), let f = axFrame(front.window) else { return }
         let h = NSScreen.screens.first?.frame.height ?? 0
         guard f.contains(CGPoint(x: mouse.x, y: h - mouse.y)) else { return }
+        note.log("clicked window \(front.id)")
         movingUntil = Date().addingTimeInterval(0.8)
         _ = start()
     }
@@ -125,6 +133,7 @@ final class Focus {
         guard trusted(), let (front, w, id) = frontWindow(), let frame = axFrame(w),
               let screen = NSScreen.screens.max(by: { topLeft($0.frame).intersection(frame).area < topLeft($1.frame).intersection(frame).area }) else { return false }
         window = w; windowID = id; app = front; before = frame; self.screen = screen
+        note.log("start \(id) \(front.localizedName ?? "") reusing=\(covers.count)")
         cellsBefore = [:]
 
         let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16)
@@ -213,6 +222,7 @@ final class Focus {
         view.material = .fullScreenUI; view.blendingMode = .behindWindow; view.state = .active
         view.onClick = { [weak self] in
             guard let self else { return }
+            note.log("click on the dark active=\(self.active)")
             if self.active { self.home() } else { self.sweep(now: true) }
         }
         let dark = FirstClickView(frame: view.bounds)
@@ -230,12 +240,14 @@ final class Focus {
     func sweep(now: Bool = false) {
         made.removeAll { !$0.isVisible }
         guard !active, !zooming, !handing, now || Date().timeIntervalSince(ended) > 1.5 else { return }
+        if !made.isEmpty { note.log("sweep now=\(now) clears \(self.made.count)") }
         for w in made { fade(w, to: 0) { w.orderOut(nil) } }
     }
 
     // Focus moves on to the window that has just come to the front: the covers stay, the old window
     // goes home behind them, then the new one comes to the middle. Without a real window in front, focus ends.
     func handOver() {
+        note.log("handOver active=\(self.active) handing=\(self.handing) zooming=\(self.zooming) front=\(self.frontWindow()?.id ?? 0) mine=\(self.windowID)")
         guard active, !handing else { return }
         if zooming {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self.handOver() }
@@ -314,6 +326,7 @@ final class Focus {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { _ = self.end(keeping: keeping, staying: staying, done: done) }
             return true
         }
+        note.log("end keeping=\(keeping) staying=\(staying) active=\(self.active) step=\(self.textStep)")
         guard let w = window, let b = blur else { return false }
         if let observer { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         observer = nil
@@ -386,7 +399,7 @@ final class Focus {
                     self.target = matchCells(w, frame: b, before: self.cellsBefore, keepRows: self.keepRows, centre: CGPoint(x: b.midX, y: b.midY))
                 }
             }
-            let finish = { self.zooming = false; done() }
+            let finish = { note.log("swap done opening=\(opening)"); self.zooming = false; done() }
             guard let old, cover == nil || still != nil else { await changeReal(); finish(); return }
 
             // A hair see-through, so macOS never counts the window behind as hidden: a hidden terminal stops
