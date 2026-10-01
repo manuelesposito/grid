@@ -247,6 +247,55 @@ extension Focus {
     }
 }
 
+// The plain left and right arrows step the row while the mouse is on the dark or on a peek; over the
+// window in the middle they belong to that window, which is often a terminal that needs them
+// (Manuel, 2026-10-01: "the mouse decides"). Control-Option-Left and -Right step wherever the mouse is.
+extension Focus {
+    func listenKeys() {
+        guard keyTap == nil else { return }
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue) | CGEventMask(1 << CGEventType.keyUp.rawValue)
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+                                          eventsOfInterest: mask, callback: { _, type, event, me in
+            let focus = Unmanaged<Focus>.fromOpaque(me!).takeUnretainedValue()
+            return focus.key(type, event)
+        }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else { note.log("no key tap"); return }
+        let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        keyTap = tap; keySource = source
+    }
+
+    func unlistenKeys() {
+        if let keySource { CFRunLoopRemoveSource(CFRunLoopGetMain(), keySource, .commonModes) }
+        if let keyTap { CGEvent.tapEnable(tap: keyTap, enable: false) }
+        keyTap = nil; keySource = nil; swallowed = []
+    }
+
+    // Runs on the main thread, as the tap's source lives in the main run loop.
+    func key(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let keyTap { CGEvent.tapEnable(tap: keyTap, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+        let code = event.getIntegerValueField(.keyboardEventKeycode)
+        guard code == 123 || code == 124 else { return Unmanaged.passUnretained(event) }
+        // The key coming up after a press that was ours is ours too.
+        if type == .keyUp { return swallowed.remove(code) != nil ? nil : Unmanaged.passUnretained(event) }
+        let mods: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+        guard event.flags.intersection(mods).isEmpty, active || handing, !overMiddle() else { return Unmanaged.passUnretained(event) }
+        swallowed.insert(code)
+        let by = code == 123 ? -1 : 1
+        DispatchQueue.main.async { self.step(by) }
+        return nil
+    }
+
+    // The mouse over the window in the middle.
+    func overMiddle() -> Bool {
+        guard !handing else { return false }
+        let m = NSEvent.mouseLocation, h = NSScreen.screens.first?.frame.height ?? 0
+        return target.contains(CGPoint(x: m.x, y: h - m.y))
+    }
+}
+
 // A panel that never wakes Grid: a click on it leaves the window in front where it is.
 final class QuietPanel: NSPanel {
     override var canBecomeKey: Bool { false }

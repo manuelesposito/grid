@@ -48,6 +48,10 @@ final class Focus {
     // The size a window was pulled to in the middle, so it takes it again the next time it comes there
     // (Manuel, 2026-10-01). Kept while Grid runs; window numbers do not outlive their windows.
     var sizes: [CGWindowID: CGSize] = [:]
+    // The plain left and right arrows, heard while the mode is on (Carousel.swift, keys()).
+    var keyTap: CFMachPort?
+    var keySource: CFRunLoopSource?
+    var swallowed: Set<Int64> = []
     var mouseWatch: Timer?
     var out = 0
 
@@ -80,10 +84,12 @@ final class Focus {
         if armed {
             armed = false
             if let clicks { NSEvent.removeMonitor(clicks) }; clicks = nil
+            unlistenKeys()
             movingUntil = Date().addingTimeInterval(0.8)
             return active ? end() : true
         }
         armed = true
+        listenKeys()
         clicks = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
             // A moment later the clicked window is the front one.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { self?.clicked(NSEvent.mouseLocation) }
