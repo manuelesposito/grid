@@ -54,6 +54,12 @@ final class Focus {
     var swallowed: Set<Int64> = []
     var mouseWatch: Timer?
     var out = 0
+    // An arrow pressed while the row is still sliding: it steps once the next window has landed and its
+    // peek is there, so no press is lost (Manuel, 2026-10-02: "sometimes I have to press two times").
+    var queued: Int?
+    // A recent picture of the window in the middle, so a step moves at once (Carousel.swift, refreshMiddle()).
+    var middleShot: (id: CGWindowID, shot: Shot, at: Date)?
+    var shooting = false
 
     // Setting from the menu: how many times bigger the terminal gets.
     var zoom: Double {
@@ -84,6 +90,7 @@ final class Focus {
         note.log("toggle armed=\(self.armed) active=\(self.active)")
         if armed {
             armed = false
+            queued = nil
             if let clicks { NSEvent.removeMonitor(clicks) }; clicks = nil
             unlistenKeys()
             movingUntil = Date().addingTimeInterval(0.8)
@@ -103,6 +110,7 @@ final class Focus {
     func step(_ by: Int) {
         note.log("step \(by) armed=\(self.armed) active=\(self.active) blocked=\(Date() <= self.movingUntil)")
         guard armed else { NSSound.beep(); return }
+        if handing && sideways { queued = by; return }
         guard Date() > movingUntil else { return }
         guard active, let screen else { _ = start(); return }
         if slideStep(by) { return }
@@ -113,7 +121,11 @@ final class Focus {
             return abs(fa.minY - fb.minY) > 40 ? fa.minY < fb.minY : fa.minX < fb.minX
         }
         guard sorted.count > 1, let i = sorted.firstIndex(where: { $0.id == windowID }) else { return }
-        let n = sorted[(i + by + sorted.count) % sorted.count]
+        raise(sorted[(i + by + sorted.count) % sorted.count])
+    }
+
+    // The old step: the window is brought forward, and the hand-over takes focus along.
+    func raise(_ n: Win) {
         var pid: pid_t = 0
         AXUIElementGetPid(n.ax, &pid)
         AXUIElementPerformAction(n.ax, kAXRaiseAction as CFString)
@@ -221,7 +233,8 @@ final class Focus {
             // Nothing re-wraps: the real window can glide.
             for c in [b] + others { c.order(.below, relativeTo: Int(id)); fade(c, to: 1) }
             if home != nil {
-                place(w, target)
+                let t = target
+                axQueue.async { place(w, t) }
                 showPeeks()
                 return true
             }
@@ -387,6 +400,7 @@ final class Focus {
         guard let w = window, let b = blur else { return false }
         unwatch()
         clearPeeks()
+        queued = nil; middleShot = nil
         if !keeping { unwatchMouse() }
         let from = axFrame(w) ?? target
         let step = textStep
@@ -548,8 +562,10 @@ final class Focus {
         config.ignoreShadowsSingleWindow = false; config.showsCursor = false
         // A canvas bigger than window and shadow keeps the picture at its real size.
         config.width = Int((frame.width + 240) * scale); config.height = Int((frame.height + 240) * scale)
-        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config),
-              let box = solidBox(image), abs(box.width - frame.width * scale) <= 1 else { if remember { known = nil }; return nil }
+        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) else { if remember { known = nil }; return nil }
+        // Finding the window in the picture reads every pixel: beside the main thread, so nothing moving stalls.
+        let found = await Task.detached(priority: .userInitiated) { solidBox(image) }.value
+        guard let box = found, abs(box.width - frame.width * scale) <= 1 else { if remember { known = nil }; return nil }
         return Shot(image: image, box: box, frame: frame, scale: scale)
     }
 
