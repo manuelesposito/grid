@@ -7,7 +7,11 @@ A small menu bar tool for the Mac that arranges your windows in tidy rows, with 
 - **Custom:** up to four rows, each with your own number of windows.
 - **Closing a window** after an arrangement: the others close the gap with the automatic layout.
 - **Focus** is a mode (Control-Option-F). While it is on, the window you click moves to the middle and
-  everything behind it goes dark. A click on the dark sends it home; the next click picks another. Control-Option-Left and -Right step to the window before or after. The same key turns Focus off.
+  everything behind it turns to frosted glass. The windows before and after peek in at the screen edges;
+  move the mouse near one and it comes out further, click it to step there. The left and right arrow keys
+  step too, while the mouse is outside the window in the middle (Control-Option-Left and -Right always do).
+  A click on the glass sends the window home. If you pull a window to a new size in the middle, Grid
+  gives it that size again next time. The same key turns Focus off.
 - **Workspaces:** save the windows on the screen and open them again later.
 - **Undo:** Control-Option-Z puts the windows back.
 
