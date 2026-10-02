@@ -398,6 +398,8 @@ extension Focus {
 
     func watchMouse() {
         guard !handing, let screen else { return }
+        let mouse = NSEvent.mouseLocation
+        if !mouseMoved, hypot(mouse.x - mouseAtArrival.x, mouse.y - mouseAtArrival.y) > 4 { mouseMoved = true }
         if !arrowsToWindow || !overMiddle() { refreshMiddle() }
         let m = NSEvent.mouseLocation, sf = screen.frame
         // A peek that is out keeps its zone a little wider, so it does not flicker at the border.
@@ -456,7 +458,8 @@ extension Focus {
         if type == .keyUp { return swallowed.remove(code) != nil ? nil : Unmanaged.passUnretained(event) }
         let mods: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
         note.log("arrow \(code) active=\(self.active) handing=\(self.handing) toWindow=\(self.arrowsToWindow)")
-        guard event.flags.intersection(mods).isEmpty, handing || (active && !arrowsToWindow) else { return Unmanaged.passUnretained(event) }
+        let toWindow = arrowsToWindow || (mouseMoved && overMiddle())
+        guard event.flags.intersection(mods).isEmpty, handing || (active && !toWindow) else { return Unmanaged.passUnretained(event) }
         swallowed.insert(code)
         let by = code == 123 ? -1 : 1
         DispatchQueue.main.async { self.step(by) }

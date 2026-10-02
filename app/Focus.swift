@@ -66,6 +66,10 @@ final class Focus {
     // its own until the next window comes (Manuel, 2026-10-02: the mouse resting on the window after the
     // click that brought it took the arrows away).
     var arrowsToWindow = false
+    // The mouse where it was when the window came, and whether it has moved since: a mouse moved onto the
+    // window hands it the arrows too, for menus in a terminal that use them (Manuel, 2026-10-02).
+    var mouseAtArrival = NSPoint.zero
+    var mouseMoved = false
     var laneHomes: [CGWindowID: CGRect] = [:]
 
     // Setting from the menu: how many times bigger the terminal gets.
@@ -179,6 +183,7 @@ final class Focus {
               let screen = NSScreen.screens.max(by: { topLeft($0.frame).intersection(frame).area < topLeft($1.frame).intersection(frame).area }) else { return false }
         window = w; windowID = id; app = front; before = frame; self.screen = screen
         arrowsToWindow = false
+        mouseAtArrival = NSEvent.mouseLocation; mouseMoved = false
         note.log("start \(id) \(front.localizedName ?? "") reusing=\(covers.count)")
         cellsBefore = [:]
 
