@@ -231,6 +231,9 @@ extension Focus {
         guard let tap = p.contentView as? Tap, tap.cards.count == 1, let old = tap.cards.first else { return }
         let card = card(s)
         card.alphaValue = 0
+        // Only the window blends; the shadow stays the old picture's, so there is never a second one on top.
+        let shade = card.layer?.contents
+        card.layer?.contents = nil
         tap.addSubview(card)
         tap.cards.append(card)
         show(p, p.visual)
@@ -241,8 +244,13 @@ extension Focus {
             card.alphaValue = k
             if k >= 1 {
                 t.invalidate(); p.blend = nil
-                // tap.edges stays the first picture's: the panel's places are measured with it.
-                old.removeFromSuperview(); tap.cards = [card]; tap.card = card
+                // The same shadow moves over to the new picture in one go. tap.edges stays the first
+                // picture's: the panel's places are measured with it.
+                CATransaction.begin(); CATransaction.setDisableActions(true)
+                card.layer?.contents = shade
+                old.removeFromSuperview()
+                CATransaction.commit()
+                tap.cards = [card]; tap.card = card
             }
         }
     }
@@ -404,15 +412,17 @@ extension Focus {
             // Blur and peeks go back among the windows; the picture, still above all, hides the change.
             for c in covers { c.level = .normal }
             for p in peeks.values { p.pic.level = .normal }
+            // The real window comes up under its picture with the same shadow: the picture lets go of its own
+            // at that moment, so the two never add up.
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            for case let c as Card in (picture.contentView as? Tap)?.cards ?? [] { c.layer?.contents = nil }
+            CATransaction.commit()
             if !start(reusing: covers, home: mid.home) {
                 for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
                 clearPeeks(); unwatchMouse()
             } else { runQueued() }
-            // The real window is drawn under its picture, then the picture fades: the window's own shadow,
-            // a little bigger now that it is in front, comes in softly instead of in one frame.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                self.fade(picture, to: 0, duration: 0.12) { picture.orderOut(nil) }
-            }
+            // One frame for the real window to be drawn under its picture, which then goes.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { picture.orderOut(nil) }
         }
         ready()
     }
