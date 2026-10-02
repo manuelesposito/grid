@@ -48,28 +48,19 @@ final class Focus {
     // The size a window was pulled to in the middle, so it takes it again the next time it comes there
     // (Manuel, 2026-10-01). Kept while Grid runs; window numbers do not outlive their windows.
     var sizes: [CGWindowID: CGSize] = [:]
-    // The plain left and right arrows, heard while the mode is on (Carousel.swift, keys()).
-    var keyTap: CFMachPort?
-    var keySource: CFRunLoopSource?
-    var swallowed: Set<Int64> = []
     var mouseWatch: Timer?
     var out = 0
-    // An arrow pressed while the row is still sliding: it steps once the next window has landed and its
-    // peek is there, so no press is lost (Manuel, 2026-10-02: "sometimes I have to press two times").
+    // A step asked for while the row is still sliding: it goes once the next window has landed and its
+    // peek is there, so no click or key is lost (Manuel, 2026-10-02: "sometimes I have to press two times").
     var queued: Int?
     // A recent picture of the window in the middle, so a step moves at once (Carousel.swift, refreshMiddle()).
     var middleShot: (id: CGWindowID, shot: Shot, at: Date)?
     var shooting = false
     // The row's order and homes while it slides, read once at the first step (Carousel.swift).
     var lane: [Win] = []
-    // The plain arrows step the row until the window in the middle is typed in or clicked; then they are
-    // its own until the next window comes (Manuel, 2026-10-02: the mouse resting on the window after the
-    // click that brought it took the arrows away).
-    var arrowsToWindow = false
-    // The mouse where it was when the window came, and whether it has moved since: a mouse moved onto the
-    // window hands it the arrows too, for menus in a terminal that use them (Manuel, 2026-10-02).
-    var mouseAtArrival = NSPoint.zero
-    var mouseMoved = false
+    // One shadow for every picture: a window's own, taken while it is in front, with the window cut out
+    // (Carousel.swift, makeShadow()). Pictures of windows behind had a smaller shadow that grew as they came in.
+    var frontShadow: FrontShadow?
     var laneHomes: [CGWindowID: CGRect] = [:]
 
     // Setting from the menu: how many times bigger the terminal gets.
@@ -103,14 +94,11 @@ final class Focus {
             armed = false
             queued = nil
             if let clicks { NSEvent.removeMonitor(clicks) }; clicks = nil
-            unlistenKeys()
             movingUntil = Date().addingTimeInterval(0.8)
             return active ? end() : true
         }
         armed = true
-        listenKeys()
         clicks = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
-            if let self, self.active, !self.handing, self.overMiddle() { self.arrowsToWindow = true }
             // A moment later the clicked window is the front one.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { self?.clicked(NSEvent.mouseLocation) }
         }
@@ -182,8 +170,6 @@ final class Focus {
         guard trusted(), let (front, w, id) = frontWindow(), let frame = home ?? axFrame(w),
               let screen = NSScreen.screens.max(by: { topLeft($0.frame).intersection(frame).area < topLeft($1.frame).intersection(frame).area }) else { return false }
         window = w; windowID = id; app = front; before = frame; self.screen = screen
-        arrowsToWindow = false
-        mouseAtArrival = NSEvent.mouseLocation; mouseMoved = false
         note.log("start \(id) \(front.localizedName ?? "") reusing=\(covers.count)")
         cellsBefore = [:]
 

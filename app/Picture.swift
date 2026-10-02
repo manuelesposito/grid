@@ -89,9 +89,11 @@ struct Shot {
 // The window with its shadow. The shadow keeps its size at the edges and stretches along them,
 // the window itself is a WindowPicture. At its own size it is exactly the shot.
 final class Card: NSView {
-    init(_ shot: Shot, titleBar: CGFloat) {
-        let s = shot.scale, img = shot.image, b = shot.box
-        let size = CGSize(width: CGFloat(img.width) / s, height: CGFloat(img.height) / s)
+    // With a shared shadow, the shadow is that one and only the window comes from the shot.
+    init(_ shot: Shot, titleBar: CGFloat, shadow: FrontShadow? = nil) {
+        let s = shot.scale, img = shadow?.image ?? shot.image, b = shadow?.box ?? shot.box
+        let w = CGFloat(img.width), h = CGFloat(img.height)
+        let size = CGSize(width: shot.frame.width + (w - b.width) / s, height: shot.frame.height + (h - b.height) / s)
         super.init(frame: NSRect(origin: .zero, size: size))
         wantsLayer = true
         let layer = self.layer!
@@ -100,10 +102,9 @@ final class Card: NSView {
         layer.contentsGravity = .resize
         // Stretch only the middle of the window; its corners and the shadow around stay as they are.
         let inset: CGFloat = 40 * s
-        let w = CGFloat(img.width), h = CGFloat(img.height)
         layer.contentsCenter = CGRect(x: (b.minX + inset) / w, y: (h - b.maxY + inset) / h,
                                       width: (b.width - 2 * inset) / w, height: (b.height - 2 * inset) / h)
-        let inner = img.cropping(to: b)!
+        let inner = shot.image.cropping(to: shot.box)!
         let win = WindowPicture(inner, size: shot.frame.size, titleBar: titleBar)
         win.frame = NSRect(x: b.minX / s, y: (h - b.maxY) / s, width: shot.frame.width, height: shot.frame.height)
         win.autoresizingMask = [.width, .height]

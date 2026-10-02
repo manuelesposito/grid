@@ -2,7 +2,8 @@
 // edges, dimmed (Manuel, 2026-10-01, picked on lab/focus-arrows.html: "Sideways", "Peek in"). When the mouse
 // comes near an edge, that peek comes out further, brighter and a touch bigger, as Stage Manager's windows
 // answer the mouse (lab/focus-peeks.html: "Far", "Medium", no name, no arrows: the peeks are the buttons).
-// A click on a peek, or Control-Option-Left and -Right, slides the row by one: the window in the middle
+// A click on a peek, or Control-Option-Left and -Right, slides the row by one (the plain arrows did too, but
+// they belong to the window: menus in a terminal use them; taken out 2026-10-02): the window in the middle
 // moves aside as a peek, the next one comes in from where the peek was.
 //
 // Only pictures move. The real windows never travel sideways: the one leaving goes home at once, under the
@@ -12,6 +13,8 @@
 import AppKit
 
 struct Peek { let pic: CardPanel; let id: CGWindowID; let shot: Shot }
+
+struct FrontShadow { let image: CGImage; let box: CGRect; let scale: CGFloat }
 
 // The window in the middle while the row slides: its picture, and the home the real one goes back to.
 struct Middle { let win: Win; let home: CGRect; let shot: Shot; let pic: CardPanel }
@@ -66,13 +69,38 @@ extension Focus {
         }
         let y = (vf.midY - h / 2).rounded()
         // The shadow lies around the window; it keeps its size, only the window inside scales.
-        let sc = s.scale
-        let l = s.box.minX / sc, t = s.box.minY / sc
-        let r = CGFloat(s.image.width) / sc - s.box.maxX / sc, b = CGFloat(s.image.height) / sc - s.box.maxY / sc
-        return CGRect(x: x - l, y: y - t, width: w + l + r, height: h + t + b)
+        let e = edges(s)
+        return CGRect(x: x - e.left, y: y - e.top, width: w + e.left + e.right, height: h + e.top + e.bottom)
     }
 
     func middleSize(_ id: CGWindowID, _ home: CGSize) -> CGSize { sizes[id] ?? home }
+
+    // The shared shadow, when it was made on a screen of this sharpness.
+    func shadow(for s: Shot) -> FrontShadow? { frontShadow.flatMap { $0.scale == s.scale ? $0 : nil } }
+
+    // How far the shadow reaches past the window on each side, in points.
+    func edges(_ s: Shot) -> NSEdgeInsets {
+        let img = shadow(for: s)?.image ?? s.image, b = shadow(for: s)?.box ?? s.box, sc = s.scale
+        return NSEdgeInsets(top: b.minY / sc, left: b.minX / sc,
+                            bottom: (CGFloat(img.height) - b.maxY) / sc, right: (CGFloat(img.width) - b.maxX) / sc)
+    }
+
+    // A window's shadow without the window: its picture taken while it is in front, the window cut out.
+    func makeShadow(_ s: Shot) -> FrontShadow? {
+        let img = s.image, w = img.width, h = img.height
+        guard let inner = img.cropping(to: s.box),
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: img.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let r = cornerRadius(inner)
+        ctx.addPath(CGPath(roundedRect: CGRect(x: s.box.minX, y: CGFloat(h) - s.box.maxY, width: s.box.width, height: s.box.height),
+                           cornerWidth: r, cornerHeight: r, transform: nil))
+        ctx.setBlendMode(.clear); ctx.fillPath()
+        return ctx.makeImage().map { FrontShadow(image: $0, box: s.box, scale: s.scale) }
+    }
+
+    func card(_ s: Shot) -> Card { Card(s, titleBar: 32, shadow: shadow(for: s)) }
 
     // A picture that can be clicked: a click on a peek slides the row towards it.
     // Its panel has the size of the biggest place the picture takes and never changes size: a window that is
@@ -88,7 +116,7 @@ extension Focus {
         p.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
         p.base = size
         let tap = Tap(frame: NSRect(origin: .zero, size: size))
-        let card = Card(s, titleBar: 32)
+        let card = card(s)
         tap.addSubview(card); tap.card = card; tap.cards = [card]; tap.edges = card.edges
         tap.onClick = { [weak self, weak p] in
             guard let self, let p, let side = self.peeks.first(where: { $0.value.pic === p })?.key else { return }
@@ -141,7 +169,15 @@ extension Focus {
         for p in peeks.values { p.pic.order(.above, relativeTo: b.windowNumber) }
         watch()
         let r = ring(screen).wins, mine = windowID
-        guard r.count > 1, let i = r.firstIndex(where: { $0.id == mine }) else { return }
+        guard r.count > 1, let i = r.firstIndex(where: { $0.id == mine }), let w = window else { return }
+        // The shadow comes first, from the window in the middle, which is in front now.
+        if frontShadow?.scale != screen.backingScaleFactor {
+            Task { @MainActor in
+                if let s = await self.shot(mine, w) { self.frontShadow = self.makeShadow(s) }
+                if self.frontShadow != nil, self.active, self.windowID == mine { self.showPeeks() }
+            }
+            return
+        }
         var sides = [(1, r[(i + 1) % r.count])]
         if r.count > 2 { sides.append((-1, r[(i - 1 + r.count) % r.count])) }
         for (side, win) in sides where peeks[side]?.id != win.id {
@@ -193,7 +229,7 @@ extension Focus {
 
     func blendIn(_ s: Shot, into p: CardPanel) {
         guard let tap = p.contentView as? Tap, tap.cards.count == 1, let old = tap.cards.first else { return }
-        let card = Card(s, titleBar: 32)
+        let card = card(s)
         card.alphaValue = 0
         tap.addSubview(card)
         tap.cards.append(card)
@@ -258,9 +294,9 @@ extension Focus {
 
         func go(_ cur: Shot) {
             // Its picture covers the real window, which then goes home under the blur.
-            let sc = cur.scale
-            let exact = CGRect(x: cur.frame.minX - cur.box.minX / sc, y: cur.frame.minY - cur.box.minY / sc,
-                               width: CGFloat(cur.image.width) / sc, height: CGFloat(cur.image.height) / sc)
+            let e = edges(cur)
+            let exact = CGRect(x: cur.frame.minX - e.left, y: cur.frame.minY - e.top,
+                               width: cur.frame.width + e.left + e.right, height: cur.frame.height + e.top + e.bottom)
             let pic = peekWindow(cur, id: oldID, side: 0, at: exact)
             pic.alphaValue = 1
             // While the row slides, blur and pictures lie above every window, so the next one can come to the
@@ -398,9 +434,7 @@ extension Focus {
 
     func watchMouse() {
         guard !handing, let screen else { return }
-        let mouse = NSEvent.mouseLocation
-        if !mouseMoved, hypot(mouse.x - mouseAtArrival.x, mouse.y - mouseAtArrival.y) > 4 { mouseMoved = true }
-        if !arrowsToWindow || !overMiddle() { refreshMiddle() }
+        if !overMiddle() { refreshMiddle() }
         let m = NSEvent.mouseLocation, sf = screen.frame
         // A peek that is out keeps its zone a little wider, so it does not flicker at the border.
         func zone(_ side: Int) -> CGFloat { out == side ? max(near, outEdge + 24) : near }
@@ -417,55 +451,7 @@ extension Focus {
     }
 }
 
-// The plain left and right arrows step the row while the mouse is on the dark or on a peek; over the
-// window in the middle they belong to that window, which is often a terminal that needs them
-// (Manuel, 2026-10-01: "the mouse decides"). Control-Option-Left and -Right step wherever the mouse is.
 extension Focus {
-    func listenKeys() {
-        guard keyTap == nil else { return }
-        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue) | CGEventMask(1 << CGEventType.keyUp.rawValue)
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-                                          eventsOfInterest: mask, callback: { _, type, event, me in
-            let focus = Unmanaged<Focus>.fromOpaque(me!).takeUnretainedValue()
-            return focus.key(type, event)
-        }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else { note.log("no key tap"); return }
-        let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        keyTap = tap; keySource = source
-        note.log("key tap on")
-    }
-
-    func unlistenKeys() {
-        if let keySource { CFRunLoopRemoveSource(CFRunLoopGetMain(), keySource, .commonModes) }
-        if let keyTap { CGEvent.tapEnable(tap: keyTap, enable: false) }
-        keyTap = nil; keySource = nil; swallowed = []
-    }
-
-    // Runs on the main thread, as the tap's source lives in the main run loop.
-    func key(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            note.log("key tap was switched off by macOS (\(type.rawValue)); on again")
-            if let keyTap { CGEvent.tapEnable(tap: keyTap, enable: true) }
-            return Unmanaged.passUnretained(event)
-        }
-        let code = event.getIntegerValueField(.keyboardEventKeycode)
-        if type == .keyDown, code != 123, code != 124, active, !handing, !arrowsToWindow {
-            note.log("typing: the arrows go to the window")
-            arrowsToWindow = true
-        }
-        guard code == 123 || code == 124 else { return Unmanaged.passUnretained(event) }
-        // The key coming up after a press that was ours is ours too.
-        if type == .keyUp { return swallowed.remove(code) != nil ? nil : Unmanaged.passUnretained(event) }
-        let mods: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
-        note.log("arrow \(code) active=\(self.active) handing=\(self.handing) toWindow=\(self.arrowsToWindow)")
-        let toWindow = arrowsToWindow || (mouseMoved && overMiddle())
-        guard event.flags.intersection(mods).isEmpty, handing || (active && !toWindow) else { return Unmanaged.passUnretained(event) }
-        swallowed.insert(code)
-        let by = code == 123 ? -1 : 1
-        DispatchQueue.main.async { self.step(by) }
-        return nil
-    }
-
     // The mouse over the window in the middle.
     func overMiddle() -> Bool {
         guard !handing else { return false }
