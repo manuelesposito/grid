@@ -11,7 +11,10 @@
 // size in the middle, so the pictures could not land on it: then Control-Option-Left and -Right step the way they did before.
 import AppKit
 
-struct Peek { let pic: NSWindow; let id: CGWindowID; let shot: Shot }
+struct Peek { let pic: CardPanel; let id: CGWindowID; let shot: Shot }
+
+// The window in the middle while the row slides: its picture, and the home the real one goes back to.
+struct Middle { let win: Win; let home: CGRect; let shot: Shot; let pic: CardPanel }
 
 // Moving and sizing a real window waits for its app to answer. Done here, the pictures keep their pace.
 let axQueue = DispatchQueue(label: "grid.ax", qos: .userInteractive)
@@ -31,23 +34,27 @@ extension Focus {
     var sideways: Bool { zoom <= 1 }
 
     // The windows on this screen in reading order of their home places, the one in the middle at its home.
-    func ring(_ screen: NSScreen) -> [Win] {
-        func home(_ w: Win) -> CGRect { w.id == windowID ? before : (axFrame(w.ax) ?? .zero) }
-        return visibleWindows(on: screen).sorted { a, b in
-            let fa = home(a), fb = home(b)
+    // Each home is read once: reading them inside the sort asked every app again and again.
+    func ring(_ screen: NSScreen) -> (wins: [Win], homes: [CGWindowID: CGRect]) {
+        let wins = visibleWindows(on: screen)
+        var homes: [CGWindowID: CGRect] = [:]
+        for w in wins { homes[w.id] = w.id == windowID ? before : (axFrame(w.ax) ?? .zero) }
+        let sorted = wins.sorted { a, b in
+            let fa = homes[a.id]!, fb = homes[b.id]!
             return abs(fa.minY - fb.minY) > 40 ? fa.minY < fb.minY : fa.minX < fb.minX
         }
+        return (sorted, homes)
     }
 
     // Where a picture lies: 0 in the middle, 1 and -1 peeking at the right and left edge, 2 and -2 just past them.
     // Out = the mouse is near that peek.
-    // In the middle a window has the size it was last pulled to there, if it was.
+    // A window has the size it was last pulled to in the middle, if it was, at the edges too.
     func spot(_ s: Shot, _ side: Int, out: Bool = false, id: CGWindowID = 0) -> CGRect {
         guard let screen else { return s.frame }
         let k = side == 0 ? 1 : out ? outScale : peekScale
         let show = out ? outEdge : edge
         let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16), sf = topLeft(screen.frame)
-        let size = side == 0 ? middleSize(id, s.frame.size) : s.frame.size
+        let size = middleSize(id, s.frame.size)
         let w = (min(size.width, vf.width) * k).rounded(), h = (min(size.height, vf.height) * k).rounded()
         let x: CGFloat
         switch side {
@@ -68,37 +75,53 @@ extension Focus {
     func middleSize(_ id: CGWindowID, _ home: CGSize) -> CGSize { sizes[id] ?? home }
 
     // A picture that can be clicked: a click on a peek slides the row towards it.
-    func peekWindow(_ s: Shot, side: Int) -> NSWindow {
-        let p = QuietPanel(contentRect: toNS(spot(s, side)), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    // Its panel has the size of the biggest place the picture takes and never changes size: a window that is
+    // resized on every frame of a motion makes the screen redraw its shadow each time, and the slide stutters
+    // (Manuel, 2026-10-02: "it's the shadow"). Only the panel moves; the picture shrinks and grows inside it.
+    func peekWindow(_ s: Shot, id: CGWindowID, side: Int, at exact: CGRect? = nil) -> CardPanel {
+        let mid = spot(s, 0, id: id), first = exact ?? spot(s, side, id: id)
+        let size = CGSize(width: max(mid.width, first.width), height: max(mid.height, first.height))
+        let p = CardPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false; p.hidesOnDeactivate = false
         p.animationBehavior = .none; p.alphaValue = 0
         p.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenAuxiliary]
-        let tap = Tap(frame: NSRect(origin: .zero, size: p.frame.size))
+        p.base = size
+        let tap = Tap(frame: NSRect(origin: .zero, size: size))
         let card = Card(s, titleBar: 32)
-        card.frame = tap.bounds; card.autoresizingMask = [.width, .height]
-        tap.addSubview(card)
+        tap.addSubview(card); tap.card = card
         tap.onClick = { [weak self, weak p] in
             guard let self, let p, let side = self.peeks.first(where: { $0.value.pic === p })?.key else { return }
             self.step(side < 0 ? -1 : 1)
         }
         p.contentView = tap
+        show(p, toNS(first))
         made.append(p); onCover?()
         return p
     }
 
-    // A picture glides to a place and an alpha on the way home's clock and curve.
-    func move(_ o: NSWindow, to r: CGRect, alpha: CGFloat, duration: Double? = nil, done: (() -> Void)? = nil) {
+    // The picture shows at r (screen coordinates): the panel moves, the picture takes r's size inside it.
+    func show(_ p: CardPanel, _ r: NSRect) {
+        let x = ((p.base.width - r.width) / 2).rounded(), y = ((p.base.height - r.height) / 2).rounded()
+        p.setFrameOrigin(NSPoint(x: r.minX - x, y: r.minY - y))
+        (p.contentView as? Tap)?.card?.frame = NSRect(x: x, y: y, width: r.width, height: r.height)
+        p.visual = r
+    }
+
+    // A picture glides to a place and an alpha on the way home's clock and curve. A new glide of the same
+    // picture takes over from the old one where it is.
+    func move(_ o: CardPanel, to r: CGRect, alpha: CGFloat, duration: Double? = nil, done: (() -> Void)? = nil) {
+        o.motion?.invalidate()
         let duration = duration ?? homeTime
-        let from = o.frame, to = toNS(r), a0 = o.alphaValue
+        let from = o.visual, to = toNS(r), a0 = o.alphaValue
         let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         var start: Date?
-        _ = Ticker { t in
+        o.motion = Ticker { [weak self] t in
             let s = start ?? Date(); start = s
             let p = still ? 1 : min(1, Date().timeIntervalSince(s) / duration), e = spring(p)
-            o.setFrame(NSRect(x: from.minX + (to.minX - from.minX) * e, y: from.minY + (to.minY - from.minY) * e,
-                              width: from.width + (to.width - from.width) * e, height: from.height + (to.height - from.height) * e), display: true)
+            self?.show(o, NSRect(x: from.minX + (to.minX - from.minX) * e, y: from.minY + (to.minY - from.minY) * e,
+                                 width: from.width + (to.width - from.width) * e, height: from.height + (to.height - from.height) * e))
             o.alphaValue = a0 + (alpha - a0) * e
-            if p >= 1 { t.invalidate(); done?() }
+            if p >= 1 { t.invalidate(); o.motion = nil; done?() }
         }
     }
 
@@ -108,7 +131,7 @@ extension Focus {
         // The blur has just been put under the window in the middle; the peeks lie above it again.
         for p in peeks.values { p.pic.order(.above, relativeTo: b.windowNumber) }
         watch()
-        let r = ring(screen), mine = windowID
+        let r = ring(screen).wins, mine = windowID
         guard r.count > 1, let i = r.firstIndex(where: { $0.id == mine }) else { return }
         var sides = [(1, r[(i + 1) % r.count])]
         if r.count > 2 { sides.append((-1, r[(i - 1 + r.count) % r.count])) }
@@ -123,10 +146,10 @@ extension Focus {
 
     func addPeek(_ s: Shot, id: CGWindowID, side: Int, above b: NSWindow) {
         if let old = peeks[side] { fade(old.pic, to: 0) { old.pic.orderOut(nil) } }
-        let p = peekWindow(s, side: side * 2)
+        let p = peekWindow(s, id: id, side: side * 2)
         p.order(.above, relativeTo: b.windowNumber)
         peeks[side] = Peek(pic: p, id: id, shot: s)
-        move(p, to: spot(s, side, out: out == side), alpha: out == side ? outAlpha : peekAlpha)
+        move(p, to: spot(s, side, out: out == side, id: id), alpha: out == side ? outAlpha : peekAlpha)
         runQueued()
     }
 
@@ -160,11 +183,10 @@ extension Focus {
     // The row slides by one. False when it cannot, and the step goes the old way.
     func slideStep(_ by: Int) -> Bool {
         guard sideways, active, !handing, textStep == 0, let screen, let w = window, let b = blur else { return false }
-        let r = ring(screen)
+        let (r, homes) = ring(screen)
         guard r.count > 1, let i = r.firstIndex(where: { $0.id == windowID }) else { return false }
         let next = r[(i + by + r.count) % r.count]
-        guard let nextHome = axFrame(next.ax) else { return false }
-        guard let incoming = peeks.values.first(where: { $0.id == next.id }) else {
+        guard peeks.values.contains(where: { $0.id == next.id }) else {
             // Its picture is still on its way: the step waits for it, a moment at most, then goes the old way.
             queued = by
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -172,15 +194,13 @@ extension Focus {
             }
             return true
         }
-        note.log("slide \(by) from \(self.windowID) to \(next.id)")
+        // The row keeps this order and these homes until a window is brought forward again.
+        lane = r; laneHomes = homes
         handing = true
         movingUntil = Date().addingTimeInterval(homeTime + 0.6)
-        let covers = [b] + others, oldID = windowID, oldHome = before
-        let after = r.count > 2 ? r[(i + 2 * by + 2 * r.count) % r.count] : nil
         out = 0
-        // The picture of the window after next is taken meanwhile.
-        let coming = after.map { a in Task { @MainActor in await self.shot(a.id, a.ax, remember: false) } }
-        // A picture of the window in the middle from the last half second, if it still has that size.
+        let covers = [b] + others, oldID = windowID, oldHome = before, me = r[i]
+        // A picture of the window in the middle from the last second, if it still has that size.
         let ready = middleShot.flatMap { m in
             m.id == oldID && Date().timeIntervalSince(m.at) < 1 && axFrame(w) == m.shot.frame ? m.shot : nil
         }
@@ -188,48 +208,18 @@ extension Focus {
 
         func go(_ cur: Shot) {
             // Its picture covers the real window, which then goes home under the blur.
-            let curPic = peekWindow(cur, side: 0)
             let sc = cur.scale
-            curPic.setFrame(toNS(CGRect(x: cur.frame.minX - cur.box.minX / sc, y: cur.frame.minY - cur.box.minY / sc,
-                                        width: CGFloat(cur.image.width) / sc, height: CGFloat(cur.image.height) / sc)), display: true)
-            curPic.alphaValue = 1
-            curPic.order(.above, relativeTo: Int(oldID))
+            let exact = CGRect(x: cur.frame.minX - cur.box.minX / sc, y: cur.frame.minY - cur.box.minY / sc,
+                               width: CGFloat(cur.image.width) / sc, height: CGFloat(cur.image.height) / sc)
+            let pic = peekWindow(cur, id: oldID, side: 0, at: exact)
+            pic.alphaValue = 1
+            pic.order(.above, relativeTo: Int(oldID))
             for c in covers.reversed() { c.order(.above, relativeTo: Int(oldID)) }
-            curPic.order(.above, relativeTo: b.windowNumber)
+            pic.order(.above, relativeTo: b.windowNumber)
             for p in peeks.values { p.pic.order(.above, relativeTo: b.windowNumber) }
             unwatch()
             window = nil; blur = nil; others = []
-            // The next one waits in the middle, under the blur, for its picture to land on it.
-            let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16)
-            let m = middleSize(next.id, nextHome.size)
-            let middle = centred(CGSize(width: min(m.width, vf.width), height: min(m.height, vf.height)), on: CGPoint(x: vf.midX, y: vf.midY))
-            // The real windows move once the picture is on screen, beside the main thread.
-            DispatchQueue.main.async { axQueue.async { place(w, oldHome); place(next.ax, middle) } }
-
-            var row: [Int: Peek] = [:]
-            // The peek on the far side leaves past the edge; the window in the middle takes its place.
-            if let gone = peeks[-by], gone.id != next.id {
-                move(gone.pic, to: spot(gone.shot, -2 * by), alpha: 0) { gone.pic.orderOut(nil) }
-            }
-            if let left = peeks[by], left.id != next.id {
-                move(left.pic, to: spot(left.shot, 2 * by), alpha: 0) { left.pic.orderOut(nil) }
-            }
-            row[-by] = Peek(pic: curPic, id: oldID, shot: cur)
-            move(curPic, to: spot(cur, -by), alpha: peekAlpha)
-            peeks = row
-            move(incoming.pic, to: spot(incoming.shot, 0, id: next.id), alpha: 1) {
-                self.arrive(next, home: nextHome, covers: covers, picture: incoming.pic)
-            }
-            guard let coming, let a = after, a.id != oldID else { return }
-            Task { @MainActor in
-                // Only into this row: a later slide has a row of its own.
-                guard let s = await coming.value, self.peeks[by]?.id != a.id, self.peeks[-by]?.id == oldID else { return }
-                let p = self.peekWindow(s, side: 2 * by)
-                p.order(.above, relativeTo: b.windowNumber)
-                self.peeks[by] = Peek(pic: p, id: a.id, shot: s)
-                self.move(p, to: self.spot(s, by), alpha: self.peekAlpha)
-                self.runQueued()
-            }
+            roll(by, from: Middle(win: me, home: oldHome, shot: cur, pic: pic), covers: covers, blur: b, screen: screen)
         }
         if let ready { go(ready); return true }
         Task { @MainActor in
@@ -239,13 +229,70 @@ extension Focus {
         return true
     }
 
-    // The picture has landed: the real window comes up in its place and Focus goes on with it.
-    func arrive(_ next: Win, home: CGRect, covers: [NSWindow], picture: NSWindow) {
-        // Once the real windows have been moved (axQueue), the next one is brought forward.
-        axQueue.async { DispatchQueue.main.async { self.raiseArrived(next, home: home, covers: covers, picture: picture) } }
+    // One slide of the row: the middle picture moves aside as a peek, the peek on the other side comes in.
+    func roll(_ by: Int, from mid: Middle, covers: [NSWindow], blur b: NSWindow, screen: NSScreen) {
+        let n = lane.count
+        guard let i = lane.firstIndex(where: { $0.id == mid.win.id }) else { return arrive(mid, covers: covers) }
+        let next = lane[(i + by + n) % n]
+        guard let incoming = peeks.values.first(where: { $0.id == next.id }), let nextHome = laneHomes[next.id] else {
+            return arrive(mid, covers: covers)
+        }
+        note.log("slide \(by) from \(mid.win.id) to \(next.id)")
+        // The next one waits in the middle, under the blur, for its picture to land on it; the one leaving
+        // goes home. Both once the pictures are on screen, beside the main thread.
+        let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16)
+        let m = middleSize(next.id, nextHome.size)
+        let middle = centred(CGSize(width: min(m.width, vf.width), height: min(m.height, vf.height)), on: CGPoint(x: vf.midX, y: vf.midY))
+        DispatchQueue.main.async { axQueue.async { place(mid.win.ax, mid.home); place(next.ax, middle) } }
+        let after = n > 2 ? lane[(i + 2 * by + 2 * n) % n] : nil
+        // The picture of the window after next is taken meanwhile.
+        let coming = after.map { a in Task { @MainActor in await self.shot(a.id, a.ax, remember: false) } }
+
+        var row: [Int: Peek] = [:]
+        // The peek on the far side leaves past the edge; the window in the middle takes its place.
+        if let gone = peeks[-by], gone.id != next.id {
+            move(gone.pic, to: spot(gone.shot, -2 * by, id: gone.id), alpha: 0) { gone.pic.orderOut(nil) }
+        }
+        if let left = peeks[by], left.id != next.id {
+            move(left.pic, to: spot(left.shot, 2 * by, id: left.id), alpha: 0) { left.pic.orderOut(nil) }
+        }
+        row[-by] = Peek(pic: mid.pic, id: mid.win.id, shot: mid.shot)
+        move(mid.pic, to: spot(mid.shot, -by, id: mid.win.id), alpha: peekAlpha)
+        peeks = row
+        move(incoming.pic, to: spot(incoming.shot, 0, id: next.id), alpha: 1) {
+            self.landed(Middle(win: next, home: nextHome, shot: incoming.shot, pic: incoming.pic), covers: covers, blur: b, screen: screen)
+        }
+        guard let coming, let a = after, a.id != mid.win.id else { return }
+        Task { @MainActor in
+            // Only into this row: a later slide has a row of its own.
+            guard let s = await coming.value, self.peeks[by]?.id != a.id, self.peeks[-by]?.id == mid.win.id else { return }
+            let p = self.peekWindow(s, id: a.id, side: 2 * by)
+            p.order(.above, relativeTo: b.windowNumber)
+            self.peeks[by] = Peek(pic: p, id: a.id, shot: s)
+            self.move(p, to: self.spot(s, by, id: a.id), alpha: self.peekAlpha)
+            self.runQueued()
+        }
     }
 
-    func raiseArrived(_ next: Win, home: CGRect, covers: [NSWindow], picture: NSWindow) {
+    // A picture has landed in the middle. Another press waiting: the row slides on from the picture, and no
+    // window is brought forward on the way, so the keys can go as fast as the row. Else the real window comes up.
+    func landed(_ mid: Middle, covers: [NSWindow], blur b: NSWindow, screen: NSScreen) {
+        if let q = queued, peeks[q < 0 ? -1 : 1] != nil {
+            queued = nil
+            roll(q, from: mid, covers: covers, blur: b, screen: screen)
+            return
+        }
+        arrive(mid, covers: covers)
+    }
+
+    // The real window comes up in its picture's place and Focus goes on with it.
+    func arrive(_ mid: Middle, covers: [NSWindow]) {
+        // Once the real windows have been moved (axQueue), the next one is brought forward.
+        axQueue.async { DispatchQueue.main.async { self.raiseArrived(mid, covers: covers) } }
+    }
+
+    func raiseArrived(_ mid: Middle, covers: [NSWindow]) {
+        let next = mid.win, picture = mid.pic
         var pid: pid_t = 0
         AXUIElementGetPid(next.ax, &pid)
         AXUIElementPerformAction(next.ax, kAXRaiseAction as CFString)
@@ -258,12 +305,15 @@ extension Focus {
             }
             handing = false
             movingUntil = .distantPast
-            if !start(reusing: covers, home: home) {
+            if !start(reusing: covers, home: mid.home) {
                 for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
                 clearPeeks(); unwatchMouse()
             } else { runQueued() }
-            // One frame for the real window to be drawn over its picture.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { picture.orderOut(nil) }
+            // The real window is drawn under its picture, then the picture fades: the window's own shadow,
+            // a little bigger now that it is in front, comes in softly instead of in one frame.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.fade(picture, to: 0, duration: 0.12) { picture.orderOut(nil) }
+            }
         }
         ready()
     }
@@ -289,14 +339,14 @@ extension Focus {
         let m = NSEvent.mouseLocation, sf = screen.frame
         // A peek that is out keeps its zone a little wider, so it does not flicker at the border.
         func zone(_ side: Int) -> CGFloat { out == side ? max(near, outEdge + 24) : near }
-        func level(_ side: Int) -> Bool { peeks[side].map { $0.pic.frame.insetBy(dx: 0, dy: -40).contains(NSPoint(x: $0.pic.frame.midX, y: m.y)) } ?? false }
+        func level(_ side: Int) -> Bool { peeks[side].map { $0.pic.visual.insetBy(dx: 0, dy: -40).contains(NSPoint(x: $0.pic.visual.midX, y: m.y)) } ?? false }
         let side = !sf.contains(m) ? 0
             : m.x < sf.minX + zone(-1) && level(-1) ? -1
             : m.x > sf.maxX - zone(1) && level(1) ? 1 : 0
         guard side != out else { return }
         for (s, p) in peeks where s == out || s == side {
             let o = s == side
-            move(p.pic, to: spot(p.shot, s, out: o), alpha: o ? outAlpha : peekAlpha, duration: outTime)
+            move(p.pic, to: spot(p.shot, s, out: o, id: p.id), alpha: o ? outAlpha : peekAlpha, duration: outTime)
         }
         out = side
     }
@@ -352,15 +402,28 @@ extension Focus {
 }
 
 // A panel that never wakes Grid: a click on it leaves the window in front where it is.
-final class QuietPanel: NSPanel {
+class QuietPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
+// A picture's panel: it keeps one size, the picture moves and scales inside it (peekWindow()).
+final class CardPanel: QuietPanel {
+    var base = CGSize.zero
+    // Where the picture shows, in screen coordinates.
+    var visual = NSRect.zero
+    var motion: Ticker?
+}
+
 final class Tap: NSView {
     var onClick: (() -> Void)?
+    // Only the picture takes clicks, not the clear rest of its panel.
+    weak var card: NSView?
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick?() }
-    override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let card else { return frame.contains(point) ? self : nil }
+        return card.frame.contains(convert(point, from: superview)) ? self : nil
+    }
 }

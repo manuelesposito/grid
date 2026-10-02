@@ -60,6 +60,9 @@ final class Focus {
     // A recent picture of the window in the middle, so a step moves at once (Carousel.swift, refreshMiddle()).
     var middleShot: (id: CGWindowID, shot: Shot, at: Date)?
     var shooting = false
+    // The row's order and homes while it slides, read once at the first step (Carousel.swift).
+    var lane: [Win] = []
+    var laneHomes: [CGWindowID: CGRect] = [:]
 
     // Setting from the menu: how many times bigger the terminal gets.
     var zoom: Double {
