@@ -108,7 +108,11 @@ final class Card: NSView {
         win.frame = NSRect(x: b.minX / s, y: (h - b.maxY) / s, width: shot.frame.width, height: shot.frame.height)
         win.autoresizingMask = [.width, .height]
         addSubview(win)
+        edges = margins
     }
+
+    // The shadow around the window at the picture's own size; it keeps this size when the picture scales.
+    var edges = NSEdgeInsets()
 
     // Where the window sits inside, in points from each side.
     var margins: NSEdgeInsets {

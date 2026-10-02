@@ -62,6 +62,10 @@ final class Focus {
     var shooting = false
     // The row's order and homes while it slides, read once at the first step (Carousel.swift).
     var lane: [Win] = []
+    // The plain arrows step the row until the window in the middle is typed in or clicked; then they are
+    // its own until the next window comes (Manuel, 2026-10-02: the mouse resting on the window after the
+    // click that brought it took the arrows away).
+    var arrowsToWindow = false
     var laneHomes: [CGWindowID: CGRect] = [:]
 
     // Setting from the menu: how many times bigger the terminal gets.
@@ -102,6 +106,7 @@ final class Focus {
         armed = true
         listenKeys()
         clicks = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            if let self, self.active, !self.handing, self.overMiddle() { self.arrowsToWindow = true }
             // A moment later the clicked window is the front one.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { self?.clicked(NSEvent.mouseLocation) }
         }
@@ -173,6 +178,7 @@ final class Focus {
         guard trusted(), let (front, w, id) = frontWindow(), let frame = home ?? axFrame(w),
               let screen = NSScreen.screens.max(by: { topLeft($0.frame).intersection(frame).area < topLeft($1.frame).intersection(frame).area }) else { return false }
         window = w; windowID = id; app = front; before = frame; self.screen = screen
+        arrowsToWindow = false
         note.log("start \(id) \(front.localizedName ?? "") reusing=\(covers.count)")
         cellsBefore = [:]
 

@@ -80,7 +80,8 @@ extension Focus {
     // (Manuel, 2026-10-02: "it's the shadow"). Only the panel moves; the picture shrinks and grows inside it.
     func peekWindow(_ s: Shot, id: CGWindowID, side: Int, at exact: CGRect? = nil) -> CardPanel {
         let mid = spot(s, 0, id: id), first = exact ?? spot(s, side, id: id)
-        let size = CGSize(width: max(mid.width, first.width), height: max(mid.height, first.height))
+        // Room around for the bigger shadow of the window once it is in front (blendIn()).
+        let size = CGSize(width: max(mid.width, first.width) + 80, height: max(mid.height, first.height) + 80)
         let p = CardPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = false; p.hidesOnDeactivate = false
         p.animationBehavior = .none; p.alphaValue = 0
@@ -88,7 +89,7 @@ extension Focus {
         p.base = size
         let tap = Tap(frame: NSRect(origin: .zero, size: size))
         let card = Card(s, titleBar: 32)
-        tap.addSubview(card); tap.card = card
+        tap.addSubview(card); tap.card = card; tap.cards = [card]; tap.edges = card.edges
         tap.onClick = { [weak self, weak p] in
             guard let self, let p, let side = self.peeks.first(where: { $0.value.pic === p })?.key else { return }
             self.step(side < 0 ? -1 : 1)
@@ -103,8 +104,16 @@ extension Focus {
     func show(_ p: CardPanel, _ r: NSRect) {
         let x = ((p.base.width - r.width) / 2).rounded(), y = ((p.base.height - r.height) / 2).rounded()
         p.setFrameOrigin(NSPoint(x: r.minX - x, y: r.minY - y))
-        (p.contentView as? Tap)?.card?.frame = NSRect(x: x, y: y, width: r.width, height: r.height)
         p.visual = r
+        guard let tap = p.contentView as? Tap else { return }
+        // r holds the first picture's shadow; a later one with another shadow lies around the same window.
+        let e0 = tap.edges
+        for case let c as Card in tap.cards {
+            let e = c.edges
+            c.frame = NSRect(x: x + e0.left - e.left, y: y + e0.bottom - e.bottom,
+                             width: r.width - e0.left - e0.right + e.left + e.right,
+                             height: r.height - e0.top - e0.bottom + e.top + e.bottom)
+        }
     }
 
     // A picture glides to a place and an alpha on the way home's clock and curve. A new glide of the same
@@ -161,6 +170,47 @@ extension Focus {
         step(q)
     }
 
+    // The next window comes to the front under the blur, and once it is there its picture is taken again and
+    // blends into the sliding picture: the title bar and the shadow of a window in front.
+    func bringForward(_ next: Win, into pic: CardPanel) {
+        var pid: pid_t = 0
+        AXUIElementGetPid(next.ax, &pid)
+        NSRunningApplication(processIdentifier: pid)?.activate()
+        var tries = 0
+        func shoot() {
+            tries += 1
+            guard handing, pic.motion != nil else { return }
+            if frontWindow()?.id != next.id && tries < 12 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02, execute: shoot); return
+            }
+            Task { @MainActor in
+                guard let s = await self.shot(next.id, next.ax, remember: false) else { return }
+                self.blendIn(s, into: pic)
+            }
+        }
+        shoot()
+    }
+
+    func blendIn(_ s: Shot, into p: CardPanel) {
+        guard let tap = p.contentView as? Tap, tap.cards.count == 1, let old = tap.cards.first else { return }
+        let card = Card(s, titleBar: 32)
+        card.alphaValue = 0
+        tap.addSubview(card)
+        tap.cards.append(card)
+        show(p, p.visual)
+        var start: Date?
+        p.blend = Ticker { t in
+            let st = start ?? Date(); start = st
+            let k = min(1, Date().timeIntervalSince(st) / 0.12)
+            card.alphaValue = k
+            if k >= 1 {
+                t.invalidate(); p.blend = nil
+                // tap.edges stays the first picture's: the panel's places are measured with it.
+                old.removeFromSuperview(); tap.cards = [card]; tap.card = card
+            }
+        }
+    }
+
     // A picture of the window in the middle is kept fresh while the mouse is off it, the only time a step
     // can come (a click on a peek, a plain arrow). Taken at the step, it held the slide back a tenth of a second.
     func refreshMiddle() {
@@ -213,10 +263,11 @@ extension Focus {
                                width: CGFloat(cur.image.width) / sc, height: CGFloat(cur.image.height) / sc)
             let pic = peekWindow(cur, id: oldID, side: 0, at: exact)
             pic.alphaValue = 1
-            pic.order(.above, relativeTo: Int(oldID))
-            for c in covers.reversed() { c.order(.above, relativeTo: Int(oldID)) }
-            pic.order(.above, relativeTo: b.windowNumber)
-            for p in peeks.values { p.pic.order(.above, relativeTo: b.windowNumber) }
+            // While the row slides, blur and pictures lie above every window, so the next one can come to the
+            // front under them before its picture lands (roll()).
+            pic.level = .floating; pic.orderFront(nil)
+            for c in covers { c.level = .floating; c.order(.below, relativeTo: pic.windowNumber) }
+            for p in peeks.values { p.pic.level = .floating; p.pic.order(.above, relativeTo: b.windowNumber) }
             unwatch()
             window = nil; blur = nil; others = []
             roll(by, from: Middle(win: me, home: oldHome, shot: cur, pic: pic), covers: covers, blur: b, screen: screen)
@@ -243,7 +294,15 @@ extension Focus {
         let vf = topLeft(screen.visibleFrame).insetBy(dx: 16, dy: 16)
         let m = middleSize(next.id, nextHome.size)
         let middle = centred(CGSize(width: min(m.width, vf.width), height: min(m.height, vf.height)), on: CGPoint(x: vf.midX, y: vf.midY))
-        DispatchQueue.main.async { axQueue.async { place(mid.win.ax, mid.home); place(next.ax, middle) } }
+        // Then the next one is brought to the front, unseen under the blur: in front its shadow is bigger, and
+        // its picture takes that look on the way in, so nothing jumps when the real window comes up.
+        DispatchQueue.main.async {
+            axQueue.async {
+                place(mid.win.ax, mid.home); place(next.ax, middle)
+                AXUIElementPerformAction(next.ax, kAXRaiseAction as CFString)
+                DispatchQueue.main.async { self.bringForward(next, into: incoming.pic) }
+            }
+        }
         let after = n > 2 ? lane[(i + 2 * by + 2 * n) % n] : nil
         // The picture of the window after next is taken meanwhile.
         let coming = after.map { a in Task { @MainActor in await self.shot(a.id, a.ax, remember: false) } }
@@ -267,6 +326,7 @@ extension Focus {
             // Only into this row: a later slide has a row of its own.
             guard let s = await coming.value, self.peeks[by]?.id != a.id, self.peeks[-by]?.id == mid.win.id else { return }
             let p = self.peekWindow(s, id: a.id, side: 2 * by)
+            if self.handing { p.level = .floating }
             p.order(.above, relativeTo: b.windowNumber)
             self.peeks[by] = Peek(pic: p, id: a.id, shot: s)
             self.move(p, to: self.spot(s, by, id: a.id), alpha: self.peekAlpha)
@@ -305,6 +365,9 @@ extension Focus {
             }
             handing = false
             movingUntil = .distantPast
+            // Blur and peeks go back among the windows; the picture, still above all, hides the change.
+            for c in covers { c.level = .normal }
+            for p in peeks.values { p.pic.level = .normal }
             if !start(reusing: covers, home: mid.home) {
                 for c in covers { fade(c, to: 0) { c.orderOut(nil) } }
                 clearPeeks(); unwatchMouse()
@@ -335,7 +398,7 @@ extension Focus {
 
     func watchMouse() {
         guard !handing, let screen else { return }
-        if !overMiddle() { refreshMiddle() }
+        if !arrowsToWindow || !overMiddle() { refreshMiddle() }
         let m = NSEvent.mouseLocation, sf = screen.frame
         // A peek that is out keeps its zone a little wider, so it does not flicker at the border.
         func zone(_ side: Int) -> CGFloat { out == side ? max(near, outEdge + 24) : near }
@@ -367,6 +430,7 @@ extension Focus {
         let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         keyTap = tap; keySource = source
+        note.log("key tap on")
     }
 
     func unlistenKeys() {
@@ -378,15 +442,21 @@ extension Focus {
     // Runs on the main thread, as the tap's source lives in the main run loop.
     func key(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            note.log("key tap was switched off by macOS (\(type.rawValue)); on again")
             if let keyTap { CGEvent.tapEnable(tap: keyTap, enable: true) }
             return Unmanaged.passUnretained(event)
         }
         let code = event.getIntegerValueField(.keyboardEventKeycode)
+        if type == .keyDown, code != 123, code != 124, active, !handing, !arrowsToWindow {
+            note.log("typing: the arrows go to the window")
+            arrowsToWindow = true
+        }
         guard code == 123 || code == 124 else { return Unmanaged.passUnretained(event) }
         // The key coming up after a press that was ours is ours too.
         if type == .keyUp { return swallowed.remove(code) != nil ? nil : Unmanaged.passUnretained(event) }
         let mods: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
-        guard event.flags.intersection(mods).isEmpty, active || handing, !overMiddle() else { return Unmanaged.passUnretained(event) }
+        note.log("arrow \(code) active=\(self.active) handing=\(self.handing) toWindow=\(self.arrowsToWindow)")
+        guard event.flags.intersection(mods).isEmpty, handing || (active && !arrowsToWindow) else { return Unmanaged.passUnretained(event) }
         swallowed.insert(code)
         let by = code == 123 ? -1 : 1
         DispatchQueue.main.async { self.step(by) }
@@ -414,12 +484,16 @@ final class CardPanel: QuietPanel {
     // Where the picture shows, in screen coordinates.
     var visual = NSRect.zero
     var motion: Ticker?
+    var blend: Ticker?
 }
 
 final class Tap: NSView {
     var onClick: (() -> Void)?
     // Only the picture takes clicks, not the clear rest of its panel.
     weak var card: NSView?
+    // Every picture in the panel (two while one blends into the other) and the first one's shadow.
+    var cards: [NSView] = []
+    var edges = NSEdgeInsets()
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func hitTest(_ point: NSPoint) -> NSView? {
