@@ -334,7 +334,7 @@ final class App: NSObject, NSApplicationDelegate {
     // A diagram with one number beside each row; Arrange waits for at least one window.
     @objc func custom() {
         let alert = NSAlert()
-        alert.messageText = "Windows per row"
+        alert.messageText = "Custom Layout"
         let saved = (UserDefaults.standard.string(forKey: "custom") ?? "3 2").split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }.filter { $0 > 0 }
         let savedFrame = UserDefaults.standard.array(forKey: "customFrame") as? [Double] ?? [1, 1]
         let input = RowsInput(rows: saved, frame: Frame(width: savedFrame[0], height: savedFrame[1]))
