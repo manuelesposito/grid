@@ -8,7 +8,6 @@ final class App: NSObject, NSApplicationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     // The first four sit in the menu; the rest under More. Control-Option-1 to 9 follow this order.
     let layouts: [[Int]] = [[2], [3], [2, 1], [2, 2], [4], [5], [3, 3], [4, 4], [5, 5]]
-    let shown = 4
     var gap: CGFloat {
         get { CGFloat(UserDefaults.standard.double(forKey: "gap")) }
         set { UserDefaults.standard.set(Double(newValue), forKey: "gap") }
@@ -77,12 +76,7 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(ws)
         menu.addItem(.separator())
         }
-        let more = NSMenu()
-        let code = NSMenuItem(title: "Coding", action: #selector(pickCoding), keyEquivalent: "c")
-        code.image = icon(coding)
-        code.setAccessibilityLabel("Coding"); code.toolTip = "Coding"
-        code.keyEquivalentModifierMask = [.control, .option]; code.target = self
-        more.addItem(code)
+        // Every layout in the menu itself, nothing under a More item (his call, 2026-10-10).
         for (i, l) in layouts.enumerated() {
             let m = NSMenuItem(title: name(l), action: #selector(pick(_:)), keyEquivalent: "")
             m.image = icon(l)
@@ -90,11 +84,11 @@ final class App: NSObject, NSApplicationDelegate {
             m.toolTip = name(l)
             m.tag = i; m.target = self
             m.keyEquivalent = "\(i + 1)"; m.keyEquivalentModifierMask = [.control, .option]
-            (i < shown ? menu : more).addItem(m)
+            menu.addItem(m)
             // Hold Shift: the same rows in a band across the middle, half the screen's height.
             let h = halfItem(name(l) + " at half height", key: "\(i + 1)", action: #selector(pickHalf(_:)), icon: icon(l, frame: Frame.full.halved))
             h.tag = i
-            (i < shown ? menu : more).addItem(h)
+            menu.addItem(h)
         }
         // One window in a box in the middle of the screen; Shift makes the box half as high.
         let mid = NSMenuItem(title: "In the Middle", action: #selector(pickMiddle), keyEquivalent: "m")
@@ -102,15 +96,13 @@ final class App: NSObject, NSApplicationDelegate {
         mid.keyEquivalentModifierMask = [.control, .option]; mid.target = self
         menu.addItem(mid)
         menu.addItem(halfItem("In the Middle at half height", key: "m", action: #selector(pickMiddleHalf), icon: icon([1], frame: Frame.middle.halved)))
-        more.addItem(.separator())
-        more.addItem(withTitle: "Custom…", action: #selector(custom), keyEquivalent: "").target = self
-        let moreItem = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
-        moreItem.submenu = more
-        menu.addItem(moreItem)
+        let code = NSMenuItem(title: "Coding", action: #selector(pickCoding), keyEquivalent: "c")
+        code.image = icon(coding)
+        code.setAccessibilityLabel("Coding"); code.toolTip = "Coding"
+        code.keyEquivalentModifierMask = [.control, .option]; code.target = self
+        menu.addItem(code)
         menu.addItem(.separator())
-        let u = NSMenuItem(title: "Undo", action: #selector(undo), keyEquivalent: "z")
-        u.keyEquivalentModifierMask = [.control, .option]; u.target = self
-        menu.addItem(u)
+        menu.addItem(withTitle: "Custom…", action: #selector(custom), keyEquivalent: "").target = self
         menu.addItem(.separator())
         let g = NSMenuItem(title: "Space between windows", action: nil, keyEquivalent: "")
         let sub = NSMenu()
@@ -291,12 +283,11 @@ final class App: NSObject, NSApplicationDelegate {
         get { let a = UserDefaults.standard.array(forKey: "lastFrame") as? [Double] ?? []; return a.count == 2 ? Frame(width: a[0], height: a[1]) : .full }
         set { UserDefaults.standard.set([newValue.width, newValue.height], forKey: "lastFrame") }
     }
-    var undoFrames: [(AXUIElement, CGRect)] = []
     // A short sound when there is nothing to arrange.
     func run(_ rows: [Int], frame: Frame = .full) {
         last = rows; lastFrame = frame
         let result = rows == coding ? arrangeCoding(gap: gap) : arrange(rows, gap: gap, frame: frame)
-        if result.placed == 0 { NSSound.beep() } else if undoFrames.isEmpty || !sameWindows(result.before) { undoFrames = result.before }
+        if result.placed == 0 { NSSound.beep() }
         magnet.set(result.after)
     }
 
@@ -310,18 +301,6 @@ final class App: NSObject, NSApplicationDelegate {
     func tick() {
         focus.sweep()
         if focus.made.isEmpty && !focus.active { ticker?.invalidate(); ticker = nil }
-    }
-
-    // Undo keeps the places from before the first of several arrangements in a row.
-    func sameWindows(_ b: [(AXUIElement, CGRect)]) -> Bool {
-        Set(b.map { CFHash($0.0) }) == Set(undoFrames.map { CFHash($0.0) })
-    }
-
-    @objc func undo() {
-        guard !undoFrames.isEmpty else { NSSound.beep(); return }
-        glide(undoFrames.compactMap { w, f in axFrame(w).map { (w, $0, f) } })
-        undoFrames = []
-        magnet.clear()
     }
 
     @objc func pickAuto() { run([]) }
