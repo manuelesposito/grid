@@ -147,7 +147,7 @@ struct Frame: Equatable {
     }
 }
 
-// Split layouts: one big window on one side (60 %), two small ones stacked on the other side.
+// Split layouts: one big window on one side (60 %), every other window stacked on the other side.
 // They are written as these codes where rows would be.
 let bigLeft = [0], bigRight = [-1]
 
@@ -157,7 +157,8 @@ func arrange(_ layout: [Int], gap: CGFloat, frame: Frame = .full) -> Result {
     guard trusted(), let screen = targetScreen() else { return nothing }
     let windows = visibleWindows(on: screen)
     if layout == bigLeft || layout == bigRight {
-        return move(Array(zip(windows, splitTiles(bigLeft: layout == bigLeft, in: frame.box(in: topLeft(screen.visibleFrame)), gap: gap))), found: windows.count)
+        let tiles = splitTiles(bigLeft: layout == bigLeft, small: max(1, windows.count - 1), in: frame.box(in: topLeft(screen.visibleFrame)), gap: gap)
+        return move(Array(zip(windows, tiles)), found: windows.count)
     }
     let rows = layout.isEmpty ? autoRows(windows.count) : layout
     guard !rows.isEmpty else { return nothing }
@@ -168,13 +169,13 @@ func arrange(_ layout: [Int], gap: CGFloat, frame: Frame = .full) -> Result {
     return move(Array(zip(windows, sorted)), found: windows.count)
 }
 
-// The big tile first, so the front window takes it; then the two small ones, top to bottom.
+// The big tile first, so the front window takes it; then the small ones, top to bottom.
 // The big side keeps the outer gap on its edge; the small side keeps it on the other.
-func splitTiles(bigLeft: Bool, in box: CGRect, gap: CGFloat) -> [CGRect] {
+func splitTiles(bigLeft: Bool, small: Int, in box: CGRect, gap: CGFloat) -> [CGRect] {
     let split = (box.width * 0.6).rounded()
     let big = CGRect(x: bigLeft ? box.minX : box.maxX - split - gap / 2, y: box.minY, width: split + gap / 2, height: box.height)
-    let small = CGRect(x: bigLeft ? box.minX + split - gap / 2 : box.minX, y: box.minY, width: box.width - split + gap / 2, height: box.height)
-    return tiles([1], in: big, gap: gap) + tiles([1, 1], in: small, gap: gap)
+    let rest = CGRect(x: bigLeft ? box.minX + split - gap / 2 : box.minX, y: box.minY, width: box.width - split + gap / 2, height: box.height)
+    return tiles([1], in: big, gap: gap) + tiles(Array(repeating: 1, count: small), in: rest, gap: gap)
 }
 
 func place(_ w: AXUIElement, _ frame: CGRect) {

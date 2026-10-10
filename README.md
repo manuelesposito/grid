@@ -5,7 +5,7 @@ A small menu bar tool for the Mac that arranges your windows in tidy rows, with 
 - **Layouts:** pick one from the menu, or press Control-Option-1 to 9. Control-Option-0 chooses one for you.
 - **Half height:** hold Shift, in the menu or on the shortcut, and the same rows sit in a band across the middle of the screen.
 - **In the Middle:** one window in a box in the middle (Control-Option-M), seven tenths of the screen each way.
-- **Big Left, Big Right:** one big window on one side, two small ones stacked on the other (Control-Option-Left and -Right).
+- **Big Left, Big Right:** one big window on one side, all the others stacked on the other (Control-Option-Left and -Right).
 - **Custom:** up to four rows, each with your own number of windows, in a box of full, three quarters or half the screen's width and height.
 - **Swap by dragging:** after an arrangement, drop a window on another window's tile and the two swap places. A window set down anywhere else stays where you left it.
 
