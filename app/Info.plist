@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>Vibedesk</string>
+	<string>SnugGrid</string>
 	<key>CFBundleIconFile</key>
-	<string>Vibedesk</string>
+	<string>SnugGrid</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.manuel.vibedesk</string>
+	<string>dev.manuel.snuggrid</string>
 	<key>CFBundleName</key>
-	<string>Vibedesk</string>
+	<string>SnugGrid</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -19,6 +19,6 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Vibedesk makes terminal text bigger in Focus and reopens workspaces.</string>
+	<string>SnugGrid makes terminal text bigger in Focus and reopens workspaces.</string>
 </dict>
 </plist>
