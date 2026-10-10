@@ -6,11 +6,15 @@
 # build.sh stays the way to build the Grid on this Mac: it keeps its permission.
 set -e
 cd "${0:A:h}"
+# The version number goes into the app, so Grid can tell a newer release from its own.
+VERSION=$1
+[[ -z $VERSION ]] && { echo "Usage: ./release.sh 1.3   (then: gh release create v1.3 dist/Grid.zip ...)"; exit 1 }
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" app/Info.plist
 APP=dist/Grid.app
 rm -rf dist && mkdir -p $APP/Contents/MacOS $APP/Contents/Resources
 # Only what Grid does ships: Focus, Workspaces and the filming harness are parked (build.sh, -D PARKED).
 for arch in arm64 x86_64; do
-  swiftc -O -target $arch-apple-macos14.0 Arrange.swift app/main.swift app/Custom.swift app/Magnet.swift -o dist/Grid-$arch
+  swiftc -O -target $arch-apple-macos14.0 Arrange.swift app/main.swift app/Custom.swift app/Magnet.swift app/Update.swift -o dist/Grid-$arch
 done
 lipo -create dist/Grid-arm64 dist/Grid-x86_64 -output $APP/Contents/MacOS/Grid && rm dist/Grid-arm64 dist/Grid-x86_64
 cp app/Info.plist $APP/Contents/Info.plist && cp app/Grid.icns $APP/Contents/Resources/Grid.icns

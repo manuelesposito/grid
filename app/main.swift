@@ -125,6 +125,9 @@ final class App: NSObject, NSApplicationDelegate {
         let l = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin), keyEquivalent: "")
         l.target = self; l.state = SMAppService.mainApp.status == .enabled ? .on : .off
         settings.addItem(l)
+        let v = NSMenuItem(title: "Look for New Versions", action: #selector(toggleUpdates), keyEquivalent: "")
+        v.target = self; v.state = update.enabled ? .on : .off
+        settings.addItem(v)
         let set = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
         set.submenu = settings
         menu.addItem(set)
