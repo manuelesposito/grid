@@ -131,19 +131,33 @@ func trusted() -> Bool {
     AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
 }
 
-// Empty rows = automatic: coding when a browser and a terminal or Claude window are both open,
-// else the layout follows the number of windows.
+// The box the rows fill: a share of the screen's width and height, in the middle of the screen.
+// 1 × 1 is the whole screen; 1 × ½ a band across the middle; 0.7 × 0.7 a box for one window.
+struct Frame: Equatable {
+    var width: Double = 1, height: Double = 1
+    static let full = Frame()
+    static let middle = Frame(width: 0.7, height: 0.7)
+    // The same width at half the height.
+    var halved: Frame { Frame(width: width, height: 0.5) }
+    func box(in r: CGRect) -> CGRect {
+        let w = (r.width * width).rounded(), h = (r.height * height).rounded()
+        return CGRect(x: (r.minX + (r.width - w) / 2).rounded(), y: (r.minY + (r.height - h) / 2).rounded(), width: w, height: h)
+    }
+}
+
+// Empty rows = automatic: coding when a browser and a terminal or Claude window are both open (and the
+// frame is the whole screen), else the layout follows the number of windows.
 @discardableResult
-func arrange(_ layout: [Int], gap: CGFloat) -> Result {
+func arrange(_ layout: [Int], gap: CGFloat, frame: Frame = .full) -> Result {
     guard trusted(), let screen = targetScreen() else { return (0, 0, []) }
     let windows = visibleWindows(on: screen)
-    if layout.isEmpty, windows.contains(where: { browsers.contains($0.bundle) }), windows.contains(where: { codingApps.contains($0.bundle) }) {
+    if layout.isEmpty, frame == .full, windows.contains(where: { browsers.contains($0.bundle) }), windows.contains(where: { codingApps.contains($0.bundle) }) {
         return arrangeCoding(gap: gap)
     }
     let rows = layout.isEmpty ? autoRows(windows.count) : layout
     guard !rows.isEmpty else { return (0, 0, []) }
     // Biggest tiles first, so the front window gets the best place; equal tiles keep reading order.
-    let sorted = tiles(rows, in: topLeft(screen.visibleFrame), gap: gap).enumerated().sorted { a, b in
+    let sorted = tiles(rows, in: frame.box(in: topLeft(screen.visibleFrame)), gap: gap).enumerated().sorted { a, b in
         a.element.area.rounded() != b.element.area.rounded() ? a.element.area > b.element.area : a.offset < b.offset
     }.map { $0.element }
     return move(Array(zip(windows, sorted)), found: windows.count)

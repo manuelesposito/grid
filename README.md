@@ -3,8 +3,10 @@
 A small menu bar tool for the Mac that arranges your windows in tidy rows, with an even space between them.
 
 - **Layouts:** pick one from the menu, or press Control-Option-1 to 9. Control-Option-0 chooses one for you.
+- **Half height:** hold Shift, in the menu or on the shortcut, and the same rows sit in a band across the middle of the screen.
+- **In the Middle:** one window in a box in the middle (Control-Option-M), seven tenths of the screen each way.
 - **Coding:** the browser on the left, terminals stacked on the right (Control-Option-C). Without a browser on the screen Grid beeps.
-- **Custom:** up to four rows, each with your own number of windows.
+- **Custom:** up to four rows, each with your own number of windows, in a box of full, three quarters or half the screen's width and height.
 - **Workspaces:** save the windows on the screen and open them again later.
 - **Undo:** Control-Option-Z puts the windows back.
 

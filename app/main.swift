@@ -35,6 +35,7 @@ final class App: NSObject, NSApplicationDelegate {
         let auto = NSMenuItem(title: "Automatic", action: #selector(pickAuto), keyEquivalent: "0")
         auto.keyEquivalentModifierMask = [.control, .option]; auto.target = self
         menu.addItem(auto)
+        menu.addItem(halfItem("Automatic", key: "0", action: #selector(pickAutoHalf)))
         // Focus is put away for now (2026-10-10): the code stays, but it has no menu item, no shortcut
         // and no setting. Set focusShown to true to bring it back.
         if focusShown {
@@ -87,7 +88,17 @@ final class App: NSObject, NSApplicationDelegate {
             m.tag = i; m.target = self
             m.keyEquivalent = "\(i + 1)"; m.keyEquivalentModifierMask = [.control, .option]
             (i < shown ? menu : more).addItem(m)
+            // Hold Shift: the same rows in a band across the middle, half the screen's height.
+            let h = halfItem(name(l) + " at half height", key: "\(i + 1)", action: #selector(pickHalf(_:)), icon: icon(l, frame: Frame.full.halved))
+            h.tag = i
+            (i < shown ? menu : more).addItem(h)
         }
+        // One window in a box in the middle of the screen; Shift makes the box half as high.
+        let mid = NSMenuItem(title: "In the Middle", action: #selector(pickMiddle), keyEquivalent: "m")
+        mid.image = icon([1], frame: .middle); mid.setAccessibilityLabel("In the Middle"); mid.toolTip = "In the Middle"
+        mid.keyEquivalentModifierMask = [.control, .option]; mid.target = self
+        menu.addItem(mid)
+        menu.addItem(halfItem("In the Middle at half height", key: "m", action: #selector(pickMiddleHalf), icon: icon([1], frame: Frame.middle.halved)))
         more.addItem(.separator())
         more.addItem(withTitle: "Custom…", action: #selector(custom), keyEquivalent: "").target = self
         let moreItem = NSMenuItem(title: "More", action: nil, keyEquivalent: "")
@@ -119,6 +130,15 @@ final class App: NSObject, NSApplicationDelegate {
         item.menu = menu
     }
 
+    // The Shift twin of a menu item: shown in its place while Shift is held.
+    func halfItem(_ title: String, key: String, action: Selector, icon: NSImage? = nil) -> NSMenuItem {
+        let m = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        m.keyEquivalentModifierMask = [.control, .option, .shift]; m.target = self
+        m.isAlternate = true
+        m.image = icon; m.setAccessibilityLabel(title); m.toolTip = title
+        return m
+    }
+
     func name(_ l: [Int]) -> String {
         l.count == 1 ? "\(l[0]) in a row" : l.map(String.init).joined(separator: " + ")
     }
@@ -126,10 +146,13 @@ final class App: NSObject, NSApplicationDelegate {
     // A small picture of the layout, in the shape of Apple's own window tiling icons: a thin outlined
     // frame, the windows as solid rounded tiles inside it with a little air around them.
     // Drawn in half points, the pixels of the screen, so every edge sits on a whole pixel.
-    func icon(_ rows: [Int], w: Int = 60, h: Int = 38, radius: CGFloat = 7) -> NSImage {
+    func icon(_ rows: [Int], frame: Frame = .full, w: Int = 60, h: Int = 38, radius: CGFloat = 7) -> NSImage {
         let line = 3, air = 3, cut = 3
+        // The tiles fill the frame's share of the room inside the outline, in the middle of it.
+        let fw = w - 2 * (line + air), fh = h - 2 * (line + air)
+        let iw = Int((Double(fw) * frame.width).rounded()), ih = Int((Double(fh) * frame.height).rounded())
         let inset = line + air
-        let iw = w - 2 * inset, ih = h - 2 * inset
+        let boxX = inset + (fw - iw) / 2, boxY = inset + (fh - ih) / 2
         // Whole-pixel sizes for n parts with cuts between them.
         func parts(_ total: Int, _ n: Int) -> [Int] {
             let room = total - cut * (n - 1)
@@ -160,7 +183,7 @@ final class App: NSObject, NSApplicationDelegate {
             let frame = NSBezierPath(roundedRect: NSRect(x: l / 2, y: l / 2, width: CGFloat(w) - l, height: CGFloat(h) - l), xRadius: radius - l / 2, yRadius: radius - l / 2)
             frame.lineWidth = l
             frame.stroke()
-            for tile in tiles { NSBezierPath(roundedRect: tile.offsetBy(dx: CGFloat(inset), dy: CGFloat(inset)), xRadius: 1.5, yRadius: 1.5).fill() }
+            for tile in tiles { NSBezierPath(roundedRect: tile.offsetBy(dx: CGFloat(boxX), dy: CGFloat(boxY)), xRadius: 1.5, yRadius: 1.5).fill() }
             return true
         }
         img.isTemplate = true
@@ -175,6 +198,7 @@ final class App: NSObject, NSApplicationDelegate {
             var id = EventHotKeyID()
             GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
             let d = NSApp.delegate as! App
+            // Ids: 0-8 the layouts, 50-58 the same at half height, 99/149 automatic, 96/146 in the middle.
             switch id.id {
             case 98: d.undo()
             case 95: d.toggleFocus()
@@ -260,11 +284,15 @@ final class App: NSObject, NSApplicationDelegate {
         get { UserDefaults.standard.array(forKey: "last") as? [Int] }
         set { UserDefaults.standard.set(newValue, forKey: "last") }
     }
+    var lastFrame: Frame {
+        get { let a = UserDefaults.standard.array(forKey: "lastFrame") as? [Double] ?? []; return a.count == 2 ? Frame(width: a[0], height: a[1]) : .full }
+        set { UserDefaults.standard.set([newValue.width, newValue.height], forKey: "lastFrame") }
+    }
     var undoFrames: [(AXUIElement, CGRect)] = []
     // A short sound when there is nothing to arrange.
-    func run(_ rows: [Int]) {
-        last = rows
-        let result = rows == coding ? arrangeCoding(gap: gap) : arrange(rows, gap: gap)
+    func run(_ rows: [Int], frame: Frame = .full) {
+        last = rows; lastFrame = frame
+        let result = rows == coding ? arrangeCoding(gap: gap) : arrange(rows, gap: gap, frame: frame)
         if result.placed == 0 { NSSound.beep() } else if undoFrames.isEmpty || !sameWindows(result.before) { undoFrames = result.before }
     }
 
@@ -292,14 +320,18 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func pickAuto() { run([]) }
+    @objc func pickAutoHalf() { run([], frame: Frame.full.halved) }
     @objc func pickCoding() { run(coding) }
+    @objc func pickMiddle() { run([1], frame: .middle) }
+    @objc func pickMiddleHalf() { run([1], frame: Frame.middle.halved) }
 
     @objc func pick(_ m: NSMenuItem) { run(layouts[m.tag]) }
+    @objc func pickHalf(_ m: NSMenuItem) { run(layouts[m.tag], frame: Frame.full.halved) }
     // A new space re-arranges the last layout right away, so the change shows.
     @objc func setGap(_ m: NSMenuItem) {
         gap = CGFloat(m.tag); rebuild()
-        let rows = last ?? []
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.run(rows) }
+        let rows = last ?? [], frame = lastFrame
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.run(rows, frame: frame) }
     }
 
     @objc func toggleLogin() {
@@ -313,7 +345,8 @@ final class App: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "Windows per row"
         let saved = (UserDefaults.standard.string(forKey: "custom") ?? "3 2").split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }.filter { $0 > 0 }
-        let input = RowsInput(rows: saved)
+        let savedFrame = UserDefaults.standard.array(forKey: "customFrame") as? [Double] ?? [1, 1]
+        let input = RowsInput(rows: saved, frame: Frame(width: savedFrame[0], height: savedFrame[1]))
         alert.accessoryView = input
         let arrange = alert.addButton(withTitle: "Arrange")
         alert.addButton(withTitle: "Cancel")
@@ -322,10 +355,11 @@ final class App: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = input.wells[0].field
         guard alert.runModal() == .alertFirstButtonReturn, !input.rows.isEmpty else { return }
-        let picked = input.rows
+        let picked = input.rows, frame = input.box
         UserDefaults.standard.set(picked.map(String.init).joined(separator: " "), forKey: "custom")
+        UserDefaults.standard.set([frame.width, frame.height], forKey: "customFrame")
         NSApp.hide(nil) // hand focus back so the front window stays first
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.run(picked) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.run(picked, frame: frame) }
     }
 }
 

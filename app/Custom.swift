@@ -58,46 +58,63 @@ final class NumberWell: NSView, NSTextFieldDelegate {
     }
 }
 
-// Four rows, each split into its windows; a row without windows is only hinted at.
+// Four rows, each split into its windows; a row without windows is only hinted at. The rows fill
+// the frame's share of the diagram, in its middle; the rest of the screen is a faint ground.
 final class RowsDiagram: NSView {
     var rows: [Int] = [] { didSet { needsDisplay = true } }
+    var frame_: Frame = .full { didSet { needsDisplay = true } }
     override var isFlipped: Bool { true }
     override func draw(_ r: NSRect) {
         NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).addClip()
-        let cut = 2
+        NSColor.labelColor.withAlphaComponent(0.05).setFill()
+        bounds.fill()
+        let box = frame_.box(in: bounds)
+        let cut = 2, rowH = Int(((box.height - CGFloat(cut) * 3) / 4).rounded(.down))
         for (i, count) in rows.enumerated() {
-            let y = CGFloat(i * 30)
+            let y = box.minY + CGFloat(i * (rowH + cut))
             guard count > 0 else {
                 NSColor.labelColor.withAlphaComponent(0.1).setFill()
-                NSBezierPath(roundedRect: NSRect(x: 0, y: y, width: bounds.width, height: 28), xRadius: 1, yRadius: 1).fill()
+                NSBezierPath(roundedRect: NSRect(x: box.minX, y: y, width: box.width, height: CGFloat(rowH)), xRadius: 1, yRadius: 1).fill()
                 continue
             }
             NSColor.labelColor.withAlphaComponent(0.9).setFill()
-            let room = Int(bounds.width) - cut * (count - 1)
-            var x = 0
+            let room = Int(box.width) - cut * (count - 1)
+            var x = Int(box.minX)
             for c in 0..<count {
                 let w = room / count + (c < room % count ? 1 : 0)
-                NSBezierPath(roundedRect: NSRect(x: CGFloat(x), y: y, width: CGFloat(w), height: 28), xRadius: 1, yRadius: 1).fill()
+                NSBezierPath(roundedRect: NSRect(x: CGFloat(x), y: y, width: CGFloat(w), height: CGFloat(rowH)), xRadius: 1, yRadius: 1).fill()
                 x += w + cut
             }
         }
     }
 }
 
-// Diagram on the left, one number per row on the right.
+// Diagram on the left, one number per row on the right; under them the width and height of the
+// box the rows fill, in quarters of the screen.
 final class RowsInput: NSView {
-    let diagram = RowsDiagram(frame: NSRect(x: 16, y: 0, width: 120, height: 118))
+    let diagram = RowsDiagram(frame: NSRect(x: 16, y: 36, width: 120, height: 118))
     var wells: [NumberWell] = []
+    let widthPop = NSPopUpButton(frame: NSRect(x: 16, y: 0, width: 100, height: 24), pullsDown: false)
+    let heightPop = NSPopUpButton(frame: NSRect(x: 128, y: 0, width: 100, height: 24), pullsDown: false)
+    static let shares: [(String, Double)] = [("Full", 1), ("¾", 0.75), ("½", 0.5)]
     var changed: () -> Void = {}
     // The rows that hold windows, top to bottom.
     var rows: [Int] { wells.map(\.value).filter { $0 > 0 } }
+    var box: Frame { Frame(width: Self.shares[widthPop.indexOfSelectedItem].1, height: Self.shares[heightPop.indexOfSelectedItem].1) }
 
-    init(rows: [Int]) {
-        super.init(frame: NSRect(x: 0, y: 0, width: 228, height: 118))
+    init(rows: [Int], frame: Frame) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 228, height: 154))
         addSubview(diagram)
+        for (pop, share, word) in [(widthPop, frame.width, "wide"), (heightPop, frame.height, "high")] {
+            pop.controlSize = .small; pop.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            for (name, _) in Self.shares { pop.addItem(withTitle: "\(name) \(word)") }
+            pop.selectItem(at: Self.shares.firstIndex { abs($0.1 - share) < 0.01 } ?? 0)
+            pop.target = self; pop.action = #selector(update)
+            addSubview(pop)
+        }
         for i in 0..<4 {
             // AppKit counts from the bottom: the first row is the highest.
-            let well = NumberWell(origin: NSPoint(x: 150, y: CGFloat(118 - 28 - i * 30 + 2)), value: i < rows.count ? min(16, rows[i]) : 0)
+            let well = NumberWell(origin: NSPoint(x: 150, y: CGFloat(36 + 118 - 28 - i * 30 + 2)), value: i < rows.count ? min(16, rows[i]) : 0)
             well.changed = { [weak self] in self?.update() }
             addSubview(well)
             wells.append(well)
@@ -108,5 +125,5 @@ final class RowsInput: NSView {
     }
     required init?(coder: NSCoder) { nil }
 
-    func update() { diagram.rows = wells.map(\.value); changed() }
+    @objc func update() { diagram.rows = wells.map(\.value); diagram.frame_ = box; changed() }
 }
