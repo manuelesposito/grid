@@ -8,7 +8,6 @@ A small menu bar tool for the Mac that arranges your windows in tidy rows, with 
 - **Coding:** the browser on the left, terminals stacked on the right (Control-Option-C). Without a browser on the screen Grid beeps.
 - **Custom:** up to four rows, each with your own number of windows, in a box of full, three quarters or half the screen's width and height.
 - **Swap by dragging:** after an arrangement, drop a window on another window's tile and the two swap places. A window set down anywhere else stays where you left it.
-- **Workspaces:** save the windows on the screen and open them again later.
 - **Undo:** Control-Option-Z puts the windows back.
 
 ## Install

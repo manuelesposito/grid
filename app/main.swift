@@ -57,6 +57,8 @@ final class App: NSObject, NSApplicationDelegate {
             settings.addItem(fs)
         }
         menu.addItem(.separator())
+        // Workspaces are put away with Focus (2026-10-10): the code stays behind focusShown.
+        if focusShown {
         // Workspaces: click opens; hold Option to delete.
         let ws = NSMenuItem(title: "Workspaces", action: nil, keyEquivalent: "")
         let wsMenu = NSMenu()
@@ -74,6 +76,7 @@ final class App: NSObject, NSApplicationDelegate {
         ws.submenu = wsMenu
         menu.addItem(ws)
         menu.addItem(.separator())
+        }
         let more = NSMenu()
         let code = NSMenuItem(title: "Coding", action: #selector(pickCoding), keyEquivalent: "c")
         code.image = icon(coding)
