@@ -1,4 +1,4 @@
-// Shared by the menu bar app and the grid command.
+// Shared by the menu bar app and the vibedesk command.
 import AppKit
 import ApplicationServices
 import QuartzCore

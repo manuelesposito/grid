@@ -1,4 +1,4 @@
-// Grid: a menu bar icon that arranges the windows on the front window's screen in rows.
+// Vibedesk: a menu bar icon that arranges the windows on the front window's screen in rows.
 import AppKit
 import ApplicationServices
 import ServiceManagement
@@ -285,7 +285,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
     #endif
 
-    // Kept across restarts, so a new space can re-arrange right after Grid starts.
+    // Kept across restarts, so a new space can re-arrange right after Vibedesk starts.
     var last: [Int]? {
         get { UserDefaults.standard.array(forKey: "last") as? [Int] }
         set { UserDefaults.standard.set(newValue, forKey: "last") }
@@ -302,8 +302,8 @@ final class App: NSObject, NSApplicationDelegate {
         magnet.set(result.after)
     }
 
-    // Grid looks once a second for a leftover Focus cover, and only while there is one: with no
-    // cover up, it sleeps. Windows move only when a layout is picked; Grid never arranges on its own.
+    // Vibedesk looks once a second for a leftover Focus cover, and only while there is one: with no
+    // cover up, it sleeps. Windows move only when a layout is picked; Vibedesk never arranges on its own.
     #if PARKED
     var ticker: Timer?
     func wake() {

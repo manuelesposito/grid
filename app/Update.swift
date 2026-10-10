@@ -1,10 +1,10 @@
-// New versions: once a day Grid asks GitHub for the number of the newest release. Nothing about you
+// New versions: once a day Vibedesk asks GitHub for the number of the newest release. Nothing about you
 // or your Mac is sent; the answer is a version number and the link to its download. When a newer
 // one exists, the menu says so, and a click opens the download in the browser.
 import AppKit
 
 final class Update {
-    static let latest = URL(string: "https://api.github.com/repos/manuelesposito/grid/releases/latest")!
+    static let latest = URL(string: "https://api.github.com/repos/manuelesposito/vibedesk/releases/latest")!
     static let day: TimeInterval = 24 * 60 * 60
     // The newer version, once one is known.
     private(set) var newer: (version: String, download: URL)?
