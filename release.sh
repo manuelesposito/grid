@@ -6,9 +6,12 @@
 # build.sh stays the way to build the SnugGrid on this Mac: it keeps its permission.
 set -e
 cd "${0:A:h}"
-# The version number goes into the app, so SnugGrid can tell a newer release from its own.
+# One command does the whole release: ./release.sh 1.4
+# It writes the version into the app, builds, signs, has Apple check it, commits the version,
+# publishes the release on GitHub with the notes from notes.md, and pushes.
 VERSION=$1
-[[ -z $VERSION ]] && { echo "Usage: ./release.sh 1.3   (then: gh release create v1.3 dist/SnugGrid.zip ...)"; exit 1 }
+[[ -z $VERSION ]] && { echo "Usage: ./release.sh 1.4   (notes come from notes.md)"; exit 1 }
+[[ -f notes.md ]] || { echo "Write the release notes into notes.md first."; exit 1 }
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" app/Info.plist
 APP=dist/SnugGrid.app
 rm -rf dist && mkdir -p $APP/Contents/MacOS $APP/Contents/Resources
@@ -25,4 +28,7 @@ xcrun notarytool submit dist/SnugGrid.zip --keychain-profile grid-notary --wait
 xcrun stapler staple $APP
 rm dist/SnugGrid.zip && ditto -c -k --keepParent $APP dist/SnugGrid.zip
 spctl -a -vv $APP
-echo "Ready: dist/SnugGrid.zip"
+git commit -qm "Version $VERSION" app/Info.plist notes.md || true
+gh release create v$VERSION dist/SnugGrid.zip --title "SnugGrid $VERSION" --notes-file notes.md
+git push
+echo "Released SnugGrid $VERSION."

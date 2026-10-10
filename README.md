@@ -29,6 +29,7 @@ The download is signed and checked by Apple, so it opens with a plain double-cli
 
 SnugGrid is a handful of Swift files and needs only Xcode's command line tools. `build.sh` builds the app
 into `~/Applications` and signs it; put the name of your own signing certificate into the script first.
+`release.sh 1.4` makes the signed, notarized download and publishes it on GitHub, with the notes from `notes.md`.
 
 ## License
 
