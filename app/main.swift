@@ -294,6 +294,7 @@ final class App: NSObject, NSApplicationDelegate {
         last = rows; lastFrame = frame
         let result = rows == coding ? arrangeCoding(gap: gap) : arrange(rows, gap: gap, frame: frame)
         if result.placed == 0 { NSSound.beep() } else if undoFrames.isEmpty || !sameWindows(result.before) { undoFrames = result.before }
+        magnet.set(result.after)
     }
 
     // Grid looks once a second for a leftover Focus cover, and only while there is one: with no
@@ -317,6 +318,7 @@ final class App: NSObject, NSApplicationDelegate {
         guard !undoFrames.isEmpty else { NSSound.beep(); return }
         glide(undoFrames.compactMap { w, f in axFrame(w).map { (w, $0, f) } })
         undoFrames = []
+        magnet.clear()
     }
 
     @objc func pickAuto() { run([]) }

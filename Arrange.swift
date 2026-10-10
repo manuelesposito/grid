@@ -105,12 +105,14 @@ func tiles(_ rows: [Int], in r: CGRect, gap: CGFloat) -> [CGRect] {
     return out
 }
 
-typealias Result = (placed: Int, found: Int, before: [(AXUIElement, CGRect)])
+// before = the frames the windows had; after = the tiles they were given.
+typealias Result = (placed: Int, found: Int, before: [(AXUIElement, CGRect)], after: [(AXUIElement, CGRect)])
+let nothing: Result = (0, 0, [], [])
 
 func move(_ pairs: [(Win, CGRect)], found: Int) -> Result {
     let moves = pairs.compactMap { w, tile in axFrame(w.ax).map { (w.ax, $0, tile) } }
     glide(moves) { for (w, _, tile) in moves { settle(w, in: tile) } }
-    return (moves.count, found, moves.map { ($0.0, $0.1) })
+    return (moves.count, found, moves.map { ($0.0, $0.1) }, moves.map { ($0.0, $0.2) })
 }
 
 // A window that would not take its tile's size (a minimum size, a fixed shape) sits in the tile's
@@ -149,13 +151,13 @@ struct Frame: Equatable {
 // frame is the whole screen), else the layout follows the number of windows.
 @discardableResult
 func arrange(_ layout: [Int], gap: CGFloat, frame: Frame = .full) -> Result {
-    guard trusted(), let screen = targetScreen() else { return (0, 0, []) }
+    guard trusted(), let screen = targetScreen() else { return nothing }
     let windows = visibleWindows(on: screen)
     if layout.isEmpty, frame == .full, windows.contains(where: { browsers.contains($0.bundle) }), windows.contains(where: { codingApps.contains($0.bundle) }) {
         return arrangeCoding(gap: gap)
     }
     let rows = layout.isEmpty ? autoRows(windows.count) : layout
-    guard !rows.isEmpty else { return (0, 0, []) }
+    guard !rows.isEmpty else { return nothing }
     // Biggest tiles first, so the front window gets the best place; equal tiles keep reading order.
     let sorted = tiles(rows, in: frame.box(in: topLeft(screen.visibleFrame)), gap: gap).enumerated().sorted { a, b in
         a.element.area.rounded() != b.element.area.rounded() ? a.element.area > b.element.area : a.offset < b.offset
@@ -170,12 +172,12 @@ let codingApps: Set<String> = ["com.mitchellh.ghostty", "com.apple.Terminal", "c
 // Without a browser on the screen nothing happens.
 @discardableResult
 func arrangeCoding(gap: CGFloat) -> Result {
-    guard trusted(), let screen = targetScreen() else { return (0, 0, []) }
+    guard trusted(), let screen = targetScreen() else { return nothing }
     let windows = visibleWindows(on: screen)
     let browser = windows.first { browsers.contains($0.bundle) }
     let coding = windows.filter { codingApps.contains($0.bundle) }
     // Without a browser on this screen there is nothing to put on the left: a beep, not a surprise layout.
-    guard browser != nil else { return (0, coding.count, []) }
+    guard browser != nil else { return (0, coding.count, [], []) }
     let vf = topLeft(screen.visibleFrame)
     var pairs: [(Win, CGRect)] = []
     var right = vf
@@ -188,7 +190,7 @@ func arrangeCoding(gap: CGFloat) -> Result {
         right = CGRect(x: vf.minX + split - gap / 2, y: vf.minY, width: vf.width - split + gap / 2, height: vf.height)
     }
     let n = coding.count
-    guard n > 0 || !pairs.isEmpty else { return (0, 0, []) }
+    guard n > 0 || !pairs.isEmpty else { return nothing }
     // Up to 3 stacked, then two per row.
     let rows = n == 0 ? [] : n <= 3 ? Array(repeating: 1, count: n) : (0..<(n + 1) / 2).map { $0 < n / 2 ? 2 : 1 }
     if !rows.isEmpty { pairs += zip(coding, tiles(rows, in: right, gap: gap)) }
