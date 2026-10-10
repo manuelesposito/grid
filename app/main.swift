@@ -35,15 +35,16 @@ final class App: NSObject, NSApplicationDelegate {
         auto.keyEquivalentModifierMask = [.control, .option]; auto.target = self
         menu.addItem(auto)
         menu.addItem(halfItem("Automatic", key: "0", action: #selector(pickAutoHalf)))
-        // Focus is put away for now (2026-10-10): the code stays, but it has no menu item, no shortcut
-        // and no setting. Set focusShown to true to bring it back.
+        // Focus and Workspaces are put away (2026-10-10): the code stays, compiled only with -D PARKED
+        // (build.sh), never in the release; and even then shown only with focusShown.
+        // Everything that is set once and left alone sits together.
+        let settings = NSMenu()
+        #if PARKED
         if focusShown {
             let f = NSMenuItem(title: "Focus", action: #selector(toggleFocus), keyEquivalent: "f")
             f.keyEquivalentModifierMask = [.control, .option]; f.target = self; f.state = focus.armed ? .on : .off
             menu.addItem(f)
         }
-        // Everything that is set once and left alone sits together.
-        let settings = NSMenu()
         if focusShown {
             let fs = NSMenuItem(title: "Focus Zoom", action: nil, keyEquivalent: "")
             let fsMenu = NSMenu()
@@ -55,8 +56,9 @@ final class App: NSObject, NSApplicationDelegate {
             fs.submenu = fsMenu
             settings.addItem(fs)
         }
+        #endif
         menu.addItem(.separator())
-        // Workspaces are put away with Focus (2026-10-10): the code stays behind focusShown.
+        #if PARKED
         if focusShown {
         // Workspaces: click opens; hold Option to delete.
         let ws = NSMenuItem(title: "Workspaces", action: nil, keyEquivalent: "")
@@ -76,6 +78,7 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(ws)
         menu.addItem(.separator())
         }
+        #endif
         // Every layout in the menu itself, nothing under a More item (his call, 2026-10-10).
         for (i, l) in layouts.enumerated() {
             let m = NSMenuItem(title: name(l), action: #selector(pick(_:)), keyEquivalent: "")
@@ -277,6 +280,7 @@ final class App: NSObject, NSApplicationDelegate {
         if !focus.toggle() { NSSound.beep() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.rebuild() }
     }
+    #endif
 
     // Kept across restarts, so a new space can re-arrange right after Grid starts.
     var last: [Int]? {
@@ -297,6 +301,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     // Grid looks once a second for a leftover Focus cover, and only while there is one: with no
     // cover up, it sleeps. Windows move only when a layout is picked; Grid never arranges on its own.
+    #if PARKED
     var ticker: Timer?
     func wake() {
         guard ticker == nil else { return }
@@ -306,6 +311,7 @@ final class App: NSObject, NSApplicationDelegate {
         focus.sweep()
         if focus.made.isEmpty && !focus.active { ticker?.invalidate(); ticker = nil }
     }
+    #endif
 
     @objc func pickAuto() { run([]) }
     @objc func pickAutoHalf() { run([], frame: Frame.full.halved) }
