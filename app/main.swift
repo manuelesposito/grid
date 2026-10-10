@@ -96,11 +96,16 @@ final class App: NSObject, NSApplicationDelegate {
         mid.keyEquivalentModifierMask = [.control, .option]; mid.target = self
         menu.addItem(mid)
         menu.addItem(halfItem("In the Middle at half height", key: "m", action: #selector(pickMiddleHalf), icon: icon([1], frame: Frame.middle.halved)))
-        let code = NSMenuItem(title: "Coding", action: #selector(pickCoding), keyEquivalent: "c")
-        code.image = icon(coding)
-        code.setAccessibilityLabel("Coding"); code.toolTip = "Coding"
-        code.keyEquivalentModifierMask = [.control, .option]; code.target = self
-        menu.addItem(code)
+        // One big window and two small ones: Control-Option-Left puts the big one left, -Right right.
+        for (rows, title, key, sel, half) in [(bigLeft, "Big Left", NSLeftArrowFunctionKey, #selector(pickBigLeft), #selector(pickBigLeftHalf)),
+                                              (bigRight, "Big Right", NSRightArrowFunctionKey, #selector(pickBigRight), #selector(pickBigRightHalf))] {
+            let k = String(UnicodeScalar(key)!)
+            let m = NSMenuItem(title: title, action: sel, keyEquivalent: k)
+            m.image = icon(rows); m.setAccessibilityLabel(title); m.toolTip = title
+            m.keyEquivalentModifierMask = [.control, .option]; m.target = self
+            menu.addItem(m)
+            menu.addItem(halfItem(title + " at half height", key: k, action: half, icon: icon(rows, frame: Frame.full.halved)))
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Custom…", action: #selector(custom), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -154,12 +159,13 @@ final class App: NSObject, NSApplicationDelegate {
             return (0..<n).map { room / n + ($0 < room % n ? 1 : 0) }
         }
         var tiles: [NSRect] = []
-        if rows == coding {
-            // Big browser tile on the left, two stacked on the right.
+        if rows == bigLeft || rows == bigRight {
+            // One big tile on one side, two stacked on the other.
             let split = Int((Double(iw) * 0.3).rounded()) * 2, hs = parts(ih, 2)
-            tiles = [NSRect(x: 0, y: 0, width: split, height: ih),
-                     NSRect(x: split + cut, y: 0, width: iw - split - cut, height: hs[0]),
-                     NSRect(x: split + cut, y: hs[0] + cut, width: iw - split - cut, height: hs[1])]
+            let bigX = rows == bigLeft ? 0 : iw - split, smallX = rows == bigLeft ? split + cut : 0
+            tiles = [NSRect(x: bigX, y: 0, width: split, height: ih),
+                     NSRect(x: smallX, y: 0, width: iw - split - cut, height: hs[0]),
+                     NSRect(x: smallX, y: hs[0] + cut, width: iw - split - cut, height: hs[1])]
         } else {
             var y = 0
             for (rowH, count) in zip(parts(ih, rows.count), rows) {
@@ -272,8 +278,6 @@ final class App: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.rebuild() }
     }
 
-    // Empty rows = automatic, [0] = coding.
-    let coding = [0]
     // Kept across restarts, so a new space can re-arrange right after Grid starts.
     var last: [Int]? {
         get { UserDefaults.standard.array(forKey: "last") as? [Int] }
@@ -286,7 +290,7 @@ final class App: NSObject, NSApplicationDelegate {
     // A short sound when there is nothing to arrange.
     func run(_ rows: [Int], frame: Frame = .full) {
         last = rows; lastFrame = frame
-        let result = rows == coding ? arrangeCoding(gap: gap) : arrange(rows, gap: gap, frame: frame)
+        let result = arrange(rows, gap: gap, frame: frame)
         if result.placed == 0 { NSSound.beep() }
         magnet.set(result.after)
     }
@@ -305,7 +309,10 @@ final class App: NSObject, NSApplicationDelegate {
 
     @objc func pickAuto() { run([]) }
     @objc func pickAutoHalf() { run([], frame: Frame.full.halved) }
-    @objc func pickCoding() { run(coding) }
+    @objc func pickBigLeft() { run(bigLeft) }
+    @objc func pickBigRight() { run(bigRight) }
+    @objc func pickBigLeftHalf() { run(bigLeft, frame: Frame.full.halved) }
+    @objc func pickBigRightHalf() { run(bigRight, frame: Frame.full.halved) }
     @objc func pickMiddle() { run([1], frame: .middle) }
     @objc func pickMiddleHalf() { run([1], frame: Frame.middle.halved) }
 

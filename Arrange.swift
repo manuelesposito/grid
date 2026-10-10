@@ -147,14 +147,17 @@ struct Frame: Equatable {
     }
 }
 
-// Empty rows = automatic: coding when a browser and a terminal or Claude window are both open (and the
-// frame is the whole screen), else the layout follows the number of windows.
+// Split layouts: one big window on one side (60 %), two small ones stacked on the other side.
+// They are written as these codes where rows would be.
+let bigLeft = [0], bigRight = [-1]
+
+// Empty rows = automatic: the layout follows the number of windows.
 @discardableResult
 func arrange(_ layout: [Int], gap: CGFloat, frame: Frame = .full) -> Result {
     guard trusted(), let screen = targetScreen() else { return nothing }
     let windows = visibleWindows(on: screen)
-    if layout.isEmpty, frame == .full, windows.contains(where: { browsers.contains($0.bundle) }), windows.contains(where: { codingApps.contains($0.bundle) }) {
-        return arrangeCoding(gap: gap)
+    if layout == bigLeft || layout == bigRight {
+        return move(Array(zip(windows, splitTiles(bigLeft: layout == bigLeft, in: frame.box(in: topLeft(screen.visibleFrame)), gap: gap))), found: windows.count)
     }
     let rows = layout.isEmpty ? autoRows(windows.count) : layout
     guard !rows.isEmpty else { return nothing }
@@ -165,36 +168,13 @@ func arrange(_ layout: [Int], gap: CGFloat, frame: Frame = .full) -> Result {
     return move(Array(zip(windows, sorted)), found: windows.count)
 }
 
-let browsers: Set<String> = ["com.google.Chrome", "com.apple.Safari", "company.thebrowser.Browser", "org.mozilla.firefox", "com.microsoft.edgemac"]
-let codingApps: Set<String> = ["com.mitchellh.ghostty", "com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.anthropic.claudefordesktop"]
-
-// Coding: the front browser window on the left (60 %), terminal and Claude windows stacked on the right.
-// Without a browser on the screen nothing happens.
-@discardableResult
-func arrangeCoding(gap: CGFloat) -> Result {
-    guard trusted(), let screen = targetScreen() else { return nothing }
-    let windows = visibleWindows(on: screen)
-    let browser = windows.first { browsers.contains($0.bundle) }
-    let coding = windows.filter { codingApps.contains($0.bundle) }
-    // Without a browser on this screen there is nothing to put on the left: a beep, not a surprise layout.
-    guard browser != nil else { return (0, coding.count, [], []) }
-    let vf = topLeft(screen.visibleFrame)
-    var pairs: [(Win, CGRect)] = []
-    var right = vf
-    if let browser {
-        if coding.isEmpty { return move([(browser, tiles([1], in: vf, gap: gap)[0])], found: 1) }
-        // The browser keeps the outer gap on its left; the stack keeps it on its right.
-        let split = (vf.width * 0.6).rounded()
-        let left = CGRect(x: vf.minX, y: vf.minY, width: split + gap / 2, height: vf.height)
-        pairs.append((browser, tiles([1], in: left, gap: gap)[0]))
-        right = CGRect(x: vf.minX + split - gap / 2, y: vf.minY, width: vf.width - split + gap / 2, height: vf.height)
-    }
-    let n = coding.count
-    guard n > 0 || !pairs.isEmpty else { return nothing }
-    // Up to 3 stacked, then two per row.
-    let rows = n == 0 ? [] : n <= 3 ? Array(repeating: 1, count: n) : (0..<(n + 1) / 2).map { $0 < n / 2 ? 2 : 1 }
-    if !rows.isEmpty { pairs += zip(coding, tiles(rows, in: right, gap: gap)) }
-    return move(pairs, found: pairs.count)
+// The big tile first, so the front window takes it; then the two small ones, top to bottom.
+// The big side keeps the outer gap on its edge; the small side keeps it on the other.
+func splitTiles(bigLeft: Bool, in box: CGRect, gap: CGFloat) -> [CGRect] {
+    let split = (box.width * 0.6).rounded()
+    let big = CGRect(x: bigLeft ? box.minX : box.maxX - split - gap / 2, y: box.minY, width: split + gap / 2, height: box.height)
+    let small = CGRect(x: bigLeft ? box.minX + split - gap / 2 : box.minX, y: box.minY, width: box.width - split + gap / 2, height: box.height)
+    return tiles([1], in: big, gap: gap) + tiles([1, 1], in: small, gap: gap)
 }
 
 func place(_ w: AXUIElement, _ frame: CGRect) {
