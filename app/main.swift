@@ -255,39 +255,23 @@ final class App: NSObject, NSApplicationDelegate {
         set { UserDefaults.standard.set(newValue, forKey: "last") }
     }
     var undoFrames: [(AXUIElement, CGRect)] = []
-    // The windows of the last arrangement; when one of them closes, the rest close the gap.
-    var arranged: Set<CGWindowID> = []
     // A short sound when there is nothing to arrange.
     func run(_ rows: [Int]) {
         last = rows
         let result = rows == coding ? arrangeCoding(gap: gap) : arrange(rows, gap: gap)
         if result.placed == 0 { NSSound.beep() } else if undoFrames.isEmpty || !sameWindows(result.before) { undoFrames = result.before }
-        arranged = Set(result.before.compactMap { w, _ in var id: CGWindowID = 0; return _AXUIElementGetWindow(w, &id) == .success ? id : nil })
-        if arranged.count > 1 { wake() }
     }
 
-    // Grid looks once a second for a closed window or a leftover cover, and only while there is
-    // something to look for: with nothing arranged and no cover up, it sleeps.
+    // Grid looks once a second for a leftover Focus cover, and only while there is one: with no
+    // cover up, it sleeps. Windows move only when a layout is picked; Grid never arranges on its own.
     var ticker: Timer?
     func wake() {
         guard ticker == nil else { return }
         ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
     }
     func tick() {
-        closeGap(); focus.sweep()
-        if arranged.count <= 1 && focus.made.isEmpty && !focus.active { ticker?.invalidate(); ticker = nil }
-    }
-
-    // Once a second: an arranged window that is gone for good (not just hidden or on another desktop)
-    // makes the others take the automatic layout. The last one left stays where it is.
-    func closeGap() {
-        guard arranged.count > 1, !focus.active, !gliding else { return }
-        let info = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
-        let alive = Set(info.compactMap { $0[kCGWindowNumber as String] as? CGWindowID })
-        let gone = arranged.subtracting(alive)
-        guard !gone.isEmpty else { return }
-        arranged.subtract(gone)
-        run([])
+        focus.sweep()
+        if focus.made.isEmpty && !focus.active { ticker?.invalidate(); ticker = nil }
     }
 
     // Undo keeps the places from before the first of several arrangements in a row.
