@@ -5,11 +5,6 @@ A small menu bar tool for the Mac that arranges your windows in tidy rows, with 
 - **Layouts:** pick one from the menu, or press Control-Option-1 to 9. Control-Option-0 chooses one for you.
 - **Coding:** the browser on the left, terminals stacked on the right (Control-Option-C). Without a browser on the screen Grid beeps.
 - **Custom:** up to four rows, each with your own number of windows.
-- **Focus** is a mode (Control-Option-F). While it is on, the window you click moves to the middle and
-  everything behind it turns to frosted glass. The windows before and after peek in at the screen edges;
-  move the mouse near one and it comes out further, click it to step there. Control-Option-Left
-  and -Right step too. A click on the glass sends the window home. If you pull a window to a new size in the middle, Grid
-  gives it that size again next time. The same key turns Focus off.
 - **Workspaces:** save the windows on the screen and open them again later.
 - **Undo:** Control-Option-Z puts the windows back.
 
@@ -22,12 +17,6 @@ A small menu bar tool for the Mac that arranges your windows in tidy rows, with 
 
 Grid runs on macOS 14 or later, on Apple silicon and Intel Macs. To start it with your Mac, choose
 Settings, Open at Login in its menu.
-
-## Two extras for terminal users
-
-- **Bigger text in Focus.** With the Ghostty terminal and a Focus Zoom above 1 ×, the text grows with
-  the window. macOS then asks for Screen Recording and for permission to control Ghostty. Grid uses the
-  first only for a picture of that one window during the animation; nothing is stored or sent.
 
 Grid works offline and sends nothing anywhere.
 

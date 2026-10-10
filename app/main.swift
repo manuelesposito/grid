@@ -35,20 +35,26 @@ final class App: NSObject, NSApplicationDelegate {
         let auto = NSMenuItem(title: "Automatic", action: #selector(pickAuto), keyEquivalent: "0")
         auto.keyEquivalentModifierMask = [.control, .option]; auto.target = self
         menu.addItem(auto)
-        let f = NSMenuItem(title: "Focus", action: #selector(toggleFocus), keyEquivalent: "f")
-        f.keyEquivalentModifierMask = [.control, .option]; f.target = self; f.state = focus.armed ? .on : .off
-        menu.addItem(f)
+        // Focus is put away for now (2026-10-10): the code stays, but it has no menu item, no shortcut
+        // and no setting. Set focusShown to true to bring it back.
+        if focusShown {
+            let f = NSMenuItem(title: "Focus", action: #selector(toggleFocus), keyEquivalent: "f")
+            f.keyEquivalentModifierMask = [.control, .option]; f.target = self; f.state = focus.armed ? .on : .off
+            menu.addItem(f)
+        }
         // Everything that is set once and left alone sits together.
         let settings = NSMenu()
-        let fs = NSMenuItem(title: "Focus Zoom", action: nil, keyEquivalent: "")
-        let fsMenu = NSMenu()
-        for z in [1, 1.5, 2] {
-            let m = NSMenuItem(title: "\(z.formatted()) ×", action: #selector(setFocusZoom(_:)), keyEquivalent: "")
-            m.target = self; m.representedObject = z; m.state = abs(focus.zoom - z) < 0.01 ? .on : .off
-            fsMenu.addItem(m)
+        if focusShown {
+            let fs = NSMenuItem(title: "Focus Zoom", action: nil, keyEquivalent: "")
+            let fsMenu = NSMenu()
+            for z in [1, 1.5, 2] {
+                let m = NSMenuItem(title: "\(z.formatted()) ×", action: #selector(setFocusZoom(_:)), keyEquivalent: "")
+                m.target = self; m.representedObject = z; m.state = abs(focus.zoom - z) < 0.01 ? .on : .off
+                fsMenu.addItem(m)
+            }
+            fs.submenu = fsMenu
+            settings.addItem(fs)
         }
-        fs.submenu = fsMenu
-        settings.addItem(fs)
         menu.addItem(.separator())
         // Workspaces: click opens; hold Option to delete.
         let ws = NSMenuItem(title: "Workspaces", action: nil, keyEquivalent: "")
